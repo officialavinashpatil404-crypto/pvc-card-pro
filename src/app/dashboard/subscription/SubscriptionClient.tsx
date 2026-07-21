@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { createPaymentSession } from './actions';
+import { useUserContext } from '../UserContext';
 
 interface UserData {
   plan?: string;
@@ -18,8 +19,7 @@ interface SubscriptionClientProps {
 export default function SubscriptionClient({ userData }: SubscriptionClientProps) {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
 
-  const userPlan = userData?.plan || 'Free';
-  const remaining = userData?.remaining_cards || 0;
+  const { plan: userPlan, remaining_cards: remaining } = useUserContext();
 
   const loadCashfreeScript = () => {
     return new Promise((resolve) => {
