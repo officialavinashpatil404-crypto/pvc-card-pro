@@ -44,8 +44,8 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
-  if (user && isAuthRoute) {
-      // user is logged in, redirect away from auth routes
+  if (user && (isAuthRoute || request.nextUrl.pathname === '/')) {
+      // user is logged in, redirect away from auth routes and homepage
       const url = request.nextUrl.clone()
       url.pathname = '/dashboard'
       return NextResponse.redirect(url)
