@@ -12,9 +12,9 @@ function getAdminSupabase() {
 
 const PLANS = {
   trial: { price: 20, cards: 10, name: 'Trial Pack' },
-  starter: { price: 320, cards: 400, name: 'Starter' },
-  pro: { price: 640, cards: 800, name: 'Pro' },
-  business: { price: 1120, cards: 1400, name: 'Business' }
+  starter: { price: 360, cards: 400, name: 'Starter Pack' },
+  pro: { price: 720, cards: 800, name: 'Pro Pack' },
+  business: { price: 1260, cards: 1400, name: 'Business Pack' }
 };
 
 export async function POST(request: NextRequest) {
