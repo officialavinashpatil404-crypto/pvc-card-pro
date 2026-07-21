@@ -51,8 +51,8 @@ export async function createPaymentSession(planId: keyof typeof PLANS) {
   const headersList = await headers();
   const host = headersList.get('host') || 'localhost:3000';
   const protocol = host.includes('localhost') ? 'http' : 'https';
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${protocol}://${host}`;
-  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  const appBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${protocol}://${host}`;
+  const cleanBaseUrl = appBaseUrl.endsWith('/') ? appBaseUrl.slice(0, -1) : appBaseUrl;
 
   const requestPayload = {
     order_amount: plan.price,
