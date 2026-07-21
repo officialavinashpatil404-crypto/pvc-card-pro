@@ -47,6 +47,13 @@ export async function createPaymentSession(planId: keyof typeof PLANS) {
   const orderId = `order_${user.id}_${Date.now()}`;
   const cleanPhone = (user.user_metadata?.mobile || '9999999999').replace(/[^0-9]/g, '').slice(-10) || '9999999999';
 
+  const { headers } = await import('next/headers');
+  const headersList = await headers();
+  const host = headersList.get('host') || 'localhost:3000';
+  const protocol = host.includes('localhost') ? 'http' : 'https';
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${protocol}://${host}`;
+  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+
   const requestPayload = {
     order_amount: plan.price,
     order_currency: "INR",
@@ -58,8 +65,8 @@ export async function createPaymentSession(planId: keyof typeof PLANS) {
       customer_phone: cleanPhone
     },
     order_meta: {
-      return_url: `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/dashboard/subscription/verify?order_id=${orderId}&plan=${planId}`,
-      notify_url: `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/webhooks/cashfree`
+      return_url: `${cleanBaseUrl}/dashboard/subscription/verify?order_id=${orderId}&plan=${planId}`,
+      notify_url: `${cleanBaseUrl}/api/webhooks/cashfree`
     }
   };
 
