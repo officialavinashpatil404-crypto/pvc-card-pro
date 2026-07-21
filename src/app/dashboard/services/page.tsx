@@ -140,12 +140,12 @@ export default async function ServicesPage() {
           {banner.link_url ? (
             <a href={banner.link_url} target="_blank" rel="noopener noreferrer" className="block transition-all hover:scale-[1.005] hover:brightness-105 duration-200 shadow-md hover:shadow-xl rounded-2xl overflow-hidden border border-slate-200/80">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={banner.image_url} alt="Advertisement Banner" className="w-full h-auto object-cover max-h-[250px]" />
+              <img src={banner.image_url} alt="Advertisement Banner" className="w-full h-auto object-cover max-h-[825px]" />
             </a>
           ) : (
             <div className="w-full rounded-2xl overflow-hidden border border-slate-200/80 shadow-md">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={banner.image_url} alt="System Announcement Banner" className="w-full h-auto object-cover max-h-[250px]" />
+              <img src={banner.image_url} alt="System Announcement Banner" className="w-full h-auto object-cover max-h-[825px]" />
             </div>
           )}
         </div>
