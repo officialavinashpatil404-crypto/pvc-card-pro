@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <style>
+    @font-face {
+      font-family: 'NotoSansCustom-Regular';
+      src: url('data:font/ttf;base64,{{localFontReg}}') format('truetype');
+      font-display: block;
+    }
+
+    @font-face {
+      font-family: 'NotoSansCustom-Bold';
+      src: url('data:font/ttf;base64,{{localFontBold}}') format('truetype');
+      font-display: block;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      font-feature-settings: 'liga' 1, 'kern' 1, 'calt' 1, 'locl' 1;
+      font-kerning: auto;
+    }
+
+    .card-container {
+      width: 1016px;
+      height: 638px;
+      position: relative;
+      background-size: 100% 100%;
+      background-repeat: no-repeat;
+      font-family: 'NotoSansCustom-Regular', Arial, sans-serif;
+      overflow: hidden;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    #card-front {
+      background-image: url('{{frontCardBase64}}');
+    }
+
+    /* ---------------- MASK OVERLAYS ---------------- */
+    .mask {
+      position: absolute;
+      background: #ffffff;
+      z-index: 1;
+    }
+
+    /* --- NEW LAYOUT MASKS --- */
+    .new-layout .mask-main {
+      left: 200px;
+      top: 260px;
+      width: 620px;
+      height: 180px;
+    }
+
+    .new-layout .mask-row1 {
+      left: 28px;
+      top: 450px;
+      width: 950px;
+      height: 40px;
+      background: #FFF8EE;
+    }
+
+    .new-layout .mask-row2 {
+      left: 28px;
+      top: 495px;
+      width: 950px;
+      height: 40px;
+      background: #FFF8EE;
+    }
+
+    /* --- OLD LAYOUT MASKS --- */
+    .old-layout .mask-main {
+      left: 200px;
+      top: 280px;
+      width: 620px;
+      height: 90px;
+    }
+
+    .old-layout .mask-row1 {
+      left: 200px;
+      top: 405px;
+      width: 620px;
+      height: 60px;
+    }
+
+    .old-layout .mask-row2 {
+      left: 200px;
+      top: 500px;
+      width: 780px;
+      height: 50px;
+    }
+
+
+    /* ---------------- PHOTO & QR CONTAINERS ---------------- */
+    .photo-container {
+      position: absolute;
+      left: 28px;
+      top: 226px;
+      width: 150px;
+      height: 200px;
+      overflow: hidden;
+      border: 1.5px solid #ccc;
+      background: #f0f0f0;
+      border-radius: 6px;
+      z-index: 2;
+    }
+
+    .photo-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .qr-container {
+      position: absolute;
+      right: 32px;
+      top: 245px;
+      width: 150px;
+      height: 150px;
+      overflow: hidden;
+      background: #fff;
+      z-index: 2;
+    }
+
+    .qr-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      image-rendering: pixelated;
+    }
+
+    /* ---------------- TYPOGRAPHY & FIELD BLOCKS ---------------- */
+    .field-row {
+      position: absolute;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      line-height: 1.2;
+      z-index: 2;
+    }
+
+    .field-label {
+      color: #df5800;
+      /* Orange #df5800 / #E86A00 */
+      font-family: 'NotoSansCustom-Bold', Arial, sans-serif;
+      font-weight: 700;
+      font-size: 20px;
+      margin-right: 6px;
+      white-space: nowrap;
+    }
+
+    .field-value {
+      color: #000000;
+      font-family: 'NotoSansCustom-Bold', Arial, sans-serif;
+      font-weight: 700;
+      font-size: 20px;
+      white-space: nowrap;
+      text-rendering: optimizeLegibility;
+      font-feature-settings: 'liga' 1, 'kern' 1, 'calt' 1, 'locl' 1;
+      font-kerning: auto;
+      unicode-bidi: plaintext;
+    }
+
+    /* --- NEW LAYOUT COORDINATES --- */
+    .new-layout .name-row {
+      left: 204px;
+      top: 268px;
+      width: 580px;
+    }
+
+    .new-layout .name-row .field-label {
+      font-size: 22px;
+    }
+
+    .new-layout .name-row .field-value {
+      font-size: 35px;
+      font-weight: 900;
+    }
+
+    .new-layout .yob-row {
+      left: 204px;
+      top: 408px;
+      width: 230px;
+    }
+
+    .new-layout .gender-row {
+      left: 450px;
+      top: 408px;
+      width: 230px;
+    }
+
+    .new-layout .village-row {
+      left: 204px;
+      top: 318px;
+      width: 580px;
+    }
+
+    .new-layout .subdivision-row {
+      left: 204px;
+      top: 348px;
+      width: 580px;
+    }
+
+    .new-layout .district-row {
+      left: 204px;
+      top: 378px;
+      width: 230px;
+    }
+
+    .new-layout .state-row {
+      left: 450px;
+      top: 378px;
+      width: 230px;
+    }
+
+    .new-layout .mobile-row {
+      left: 28px;
+      top: 455px;
+      width: 380px;
+    }
+
+    .new-layout .pmjay-row {
+      left: 450px;
+      top: 455px;
+      width: 500px;
+    }
+
+    .new-layout .pmjay-row .field-value {
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .new-layout .abha-row {
+      left: 28px;
+      top: 502px;
+      width: 380px;
+    }
+
+    .new-layout .ration-row {
+      left: 450px;
+      top: 502px;
+      width: 500px;
+    }
+
+
+    /* --- OLD LAYOUT COORDINATES --- */
+    .old-layout .name-row {
+      left: 204px;
+      top: 295px;
+      width: 580px;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .old-layout .name-row .field-label {
+      font-size: 22px;
+      margin-bottom: 2px;
+    }
+
+    .old-layout .name-row .field-value {
+      font-size: 35px;
+      font-weight: 900;
+    }
+
+    .old-layout .yob-row {
+      left: 204px;
+      top: 420px;
+      width: 230px;
+    }
+
+    .old-layout .gender-row {
+      left: 450px;
+      top: 420px;
+      width: 230px;
+    }
+
+    .old-layout .village-row {
+      display: none;
+    }
+
+    .old-layout .subdivision-row {
+      display: none;
+    }
+
+    .old-layout .district-row {
+      display: none;
+    }
+
+    .old-layout .state-row {
+      display: none;
+    }
+
+    .old-layout .mobile-row {
+      display: none;
+    }
+
+    .old-layout .pmjay-row {
+      left: 450px;
+      top: 512px;
+      width: 500px;
+    }
+
+    .old-layout .pmjay-row .field-value {
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .old-layout .abha-row {
+      left: 204px;
+      top: 512px;
+      width: 380px;
+    }
+
+    .old-layout .ration-row {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="card-container {{layoutClass}}" id="card-front">
+    <!-- Solid white mask blocks to cover the pre-printed template labels & values -->
+    <div class="mask mask-main"></div>
+    <div class="mask mask-row1"></div>
+    <div class="mask mask-row2"></div>
+
+    <!-- Photo and QR -->
+    <div class="photo-container">
+      <img src="{{photoBase64}}" class="photo-img" alt="Photo" />
+    </div>
+
+    <div class="qr-container">
+      <img src="{{qrBase64}}" class="qr-img" alt="QR" />
+    </div>
+
+    <!-- Dynamic Fields with Montserrat/Arial bold layout structure -->
+    <div class="field-row name-row">
+      <span class="field-label">{{nameLabel}}</span>
+      <span class="field-value">{{name}}</span>
+    </div>
+
+    <div class="field-row village-row">
+      <span class="field-label">{{villageLabel}}</span>
+      <span class="field-value">{{village}}</span>
+    </div>
+
+    <div class="field-row subdivision-row">
+      <span class="field-label">{{subdivisionLabel}}</span>
+      <span class="field-value">{{subdivision}}</span>
+    </div>
+
+    <div class="field-row district-row">
+      <span class="field-label">{{districtLabel}}</span>
+      <span class="field-value">{{district}}</span>
+    </div>
+
+    <div class="field-row state-row">
+      <span class="field-label">{{stateLabel}}</span>
+      <span class="field-value">{{state}}</span>
+    </div>
+
+    <div class="field-row yob-row">
+      <span class="field-label">{{yobLabel}}</span>
+      <span class="field-value">{{dob}}</span>
+    </div>
+
+    <div class="field-row gender-row">
+      <span class="field-label">{{genderLabel}}</span>
+      <span class="field-value">{{gender}}</span>
+    </div>
+
+    <div class="field-row mobile-row">
+      <span class="field-label">{{mobileLabel}}</span>
+      <span class="field-value">{{mobile}}</span>
+    </div>
+
+    <div class="field-row pmjay-row">
+      <span class="field-label">{{pmjayLabel}}</span>
+      <span class="field-value">{{pmjayId}}</span>
+    </div>
+
+    <div class="field-row abha-row">
+      <span class="field-label">{{abhaLabel}}</span>
+      <span class="field-value">{{abhaNumber}}</span>
+    </div>
+
+    <div class="field-row ration-row">
+      <span class="field-label">{{rationLabel}}</span>
+      <span class="field-value">{{rationId}}</span>
+    </div>
+  </div>
+
+  <script>
+    window.fitText = function () {
+      const fitSingleLine = (selector, maxW, initialSize) => {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => {
+          let size = initialSize;
+          el.style.fontSize = size + 'px';
+          while (el.scrollWidth > maxW && size > 10) {
+            size -= 0.5;
+            el.style.fontSize = size + 'px';
+          }
+        });
+      };
+
+      fitSingleLine('.name-row .field-value', 450, 35);
+      fitSingleLine('.yob-row .field-value', 120, 20);
+      fitSingleLine('.gender-row .field-value', 120, 20);
+      fitSingleLine('.village-row .field-value', 350, 20);
+      fitSingleLine('.subdivision-row .field-value', 300, 20);
+      fitSingleLine('.district-row .field-value', 120, 20);
+      fitSingleLine('.state-row .field-value', 130, 20);
+      fitSingleLine('.mobile-row .field-value', 200, 20);
+      fitSingleLine('.pmjay-row .field-value', 250, 24);
+      fitSingleLine('.abha-row .field-value', 200, 20);
+      fitSingleLine('.ration-row .field-value', 200, 20);
+    };
+  </script>
+</body>
+
+</html>

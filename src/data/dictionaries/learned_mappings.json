@@ -1,0 +1,139 @@
+{
+  "gujarati": {
+    "names": {
+      "kevin": "કેવિન",
+      "lilesh": "લીલેશ",
+      "patil": "પાટીલ",
+      "harishchandra": "હરિશ્ચંદ્ર",
+      "pandurang": "પાંડુરંગ",
+      "ajage": "આજગે",
+      "kunal": "કુણાલ",
+      "tukaram": "તુકારામ",
+      "gosavi": "ગોસાવી",
+      "baijnath": "બૈજનાથ",
+      "rana": "રાણા",
+      "bhikha": "ભીખા",
+      "raghunath": "રઘુનાથ",
+      "chauhan": "ચૌહાણ",
+      "kusum": "કુસુમ",
+      "lileshkumar": "લિલેશકુમાર",
+      "naval": "નવલ",
+      "nilkanth": "નીલકંઠ",
+      "patel": "પટેલ",
+      "harsh": "હર્ષ",
+      "arunkumarsingh": "અરુણકુમારસિંહ",
+      "ramprasadsingh": "રામપ્રસાદસિંહ",
+      "rajput": "રાજપૂત",
+      "mangalben": "મંગલબેન",
+      "ajage kalpna harishchndra": "અજગે કલ્પના હરીશચંદ્ર",
+      "sonar bhikha raghunath": "સોનાર ભીખા રઘુનાથ",
+      "sonar laxmiben": "સોનાર લક્ષ્મીબેન",
+      "avinash naval patil": "અવનાશ નવલ પાટીલ",
+      "baijnath rana": "બૈજનાથ રાણા",
+      "poonam lileshkumar patil": "પૂનમ લીલેશકુમાર પાટીલ",
+      "ankita kumari": "અંકિતા કુમારી",
+      "jagmohan pandey": "જગમોહન પાંડેય",
+      "parvati pandey": "પાર્વતી પાંડે",
+      "varude sanjay": "વારુડે સંજય",
+      "vishakha mahendra bedse": "વિશાખા મહેન્દ્ર બેડસે"
+    },
+    "addresses": {
+      "plot no-69": "પ્લોટ નંબર-69",
+      "ambika villa": "અંબિકા વિલા",
+      "dindoli": "ડિંડોલી",
+      "near g9": "G9 પાસે",
+      "surat city": "સુરત શહેર",
+      "po: udhna": "પો: ઉધના",
+      "s/o sonar raghunath": "સોનાર રઘુનાથ",
+      "silver residency": "સિલ્વર રેસીડેન્સી",
+      "kardava road": "કારડાવા રોડ",
+      "c/o chouhan umesh": "કે/ઓ ચૌહાણ ઉમેશ",
+      "plot no 36": "પ્લોટ નં. 36",
+      "sai laxmi residency": "સાઈ લક્ષ્મી રેસિડેન્સી",
+      "chorasi": "ચોરાસી",
+      "karadva": "કરડવા",
+      "po: dindoli": "પો: ડીંડોલી",
+      "w/o sonar bhikha": "ડબલ્યુ/ઓ સોનાર ભીખા",
+      "sumukh circle": "સુમુખ ચોક",
+      "karadva road": "કરાડવા માર્ગ",
+      "b-602": "B-602",
+      "rudraa homes": "રુદ્રા હોમ્સ",
+      "opp sumukh residency": "સુમુખ રેસિડેન્સી સામે",
+      "s/o: ramprasadsingh rajput": "આત્મજ: રામપ્રસાદસિંહ રાજપૂત",
+      "plot no-30": "પ્લોટ નં.-૩૦",
+      "raghunandan row house": "રઘુનંદન રો-હાઉસ",
+      "near sunrise school": "સનરાઇઝ સ્કૂલ પાસે",
+      "godadara": "ગોડાદરા",
+      "po: godadara": "પો.ઓ.: ગોડાદરા",
+      "c/o harishchandra pandurang ajage, 287-288, rameshwarnagar, dindoli, surat city, po: udhna, dist: surat, gujarat -, 394210": "C/O હરીશચંદ્ર પાંડુરંગ આજગે, 287-288, રામેશ્વર નગર, ડિંડોલી, સુરત શહેર, ઉધના, સુરત, ગુજરાત - 394210",
+      "s/o sonar raghunath, 74, silver residency, kardava road, dindoli, surat city, po: udhna, dist: surat, gujarat -, 394210": "સોનાર રઘુનાથના પુત્ર, ૭૪, સિલ્વર રેસિડેન્સી, કરડવા રોડ, ડિંડોલી, સુરત શહેર, પો.ઓ.: ઉધના, જિલ્લો: સુરત, ગુજરાત -, ૩૯૪૨૧૦",
+      "w/o sonar bhikha, 74, silver residency, sumukh circle, karadva road, dindoli, surat city, po: udhna, dist: surat, gujarat -, 394210": "ડબલ્યુ/ઓ સોનાર ભીખા, 74, સિલ્વર રેસિડેન્સી, સુમુખ ચોક, કરાડવા માર્ગ, ડીંડોલી, સુરત શહેર, ઉધના, સુરત, ગુજરાત - 394210",
+      "s/o naval, a-6, govardhan nagar -2, beside shivalik square ,near rami park, dindoli, surat city, po: udhna, dist: surat, gujarat -, 394210": "S/O નવલ, ઍ-6, ગોવર્ધન નગર -2, શિવાલિક સ્ક્વેર બાજુમાં, રામી પાર્ક પાસે, ડીંડોલી, સુરત સિટી, પોસ્ટ: ઉધના, જીલ્લો: સુરત, ગુજરાત - 394210",
+      "plot no-69, ambika villa, dindoli, near g9, surat city, po: udhna, dist: surat, gujarat -, 394210": "પ્લોટ નં-69, અંબિકા વિલા, ડિંડોલી, G9 નજીક, સુરત શહેર, પોસ્ટ: ઉધના, જિલ્લો: સુરત, ગુજરાત -, 394210",
+      "b-602, rudraa homes, karadva, opp sumukh residency, karadva, po: dindoli, dist: surat, gujarat -, 394210": "બી-૬૦૨, રુદ્રા હોમ્સ, કરડવા, સુમુખ રેસિડેન્સી સામે, કરડવા, પો. ડિંડોલી, જિ. સુરત, ગુજરાત -, ૩૯૪૨૧૦",
+      "p-13 devchand, udhna maggdla rod, udhna, udhna, surat city, po: udhna, dist: surat, gujarat -, 394210": "પી-13 દેવચંદ, ઉધના મગદલા રોડ, ઉધના, ઉધના, સુરત સિટી, પોસ્ટ: ઉધના, જિલ્લો: સુરત, ગુજરાત - 394210",
+      "27/a,3rd floor, devchand nagar, opp volkswagen service cente, um road, surat city, po: udhna, dist: surat, gujarat -, 394210": "૨૭/એ, ત્રીજો માળ, દેવચંદ નગર, વોલ્કસવેગન સર્વિસ સેન્ટર ની સામે, યુએમ માર્ગ, સુરત શહેર, ઉધના, સુરત, ગુજરાત - 394210",
+      "ramsajeevan pandey, b-19, jalaram nagar, housing board, pandesara, near sbi bank, surat city, po: pandesara, dist: surat, gujarat -, 394221": "રામસજીવન પાંડેય, બી-૧૯, જલારામ નગર, હાઉસિંગ બોર્ડ, પાંડેસરા, એસબીઆઈ બેંક નજીક, સુરત શહેર, પોસ્ટ: પાંડેસરા, જિલ્લો: સુરત, ગુજરાત -, ૩૯૪૨૨૧",
+      "ramsajevan pandey, b-19, jalaram nagar, housing board, near sbi bank, piyush point, surat city, po: pandesara, dist: surat, gujarat -, 394221": "રામસાજેવન પાંડે, બી-૧૯, જલારામ નગર, હાઉસિંગ બોર્ડ, એસબીઆઈ બેંક પાસે, પીયૂષ પોઈન્ટ, સુરત શહેર, પોસ્ટ: પાંડેસરા, જિલ્લો: સુરત, ગુજરાત -, ૩૯૪૨૨૧",
+      "30, shivalik residency, dindoli, surat (m\ncorp+og) (part), po: udhna, dist: surat,\ngujarat - 394210": "30, શિવાલિક રેસીડેન્સી, ડિન્ડોલી, સુરત (એમ કોર્પ+ઓગ) (પાર્ટ), પો: ઉધના, જિલ્લો: સુરત, ગુજરાત - 394210",
+      "c/o mahendra bedse, a1-304 , prayosha prime, karadva road, n/r sumukh circle, dindoli, surat (m corp+og) (part), po: udhna, dist: surat, gujarat -, 394210": "C/O મહેન્દ્ર બેડસે, A1-304, પ્રયોષા પ્રાઇમ, કરડવા રોડ, ન/ર સુમુખ સર્કલ, ડિંડોલી, સુરત (એમ કોર્પ+ઓજી) (પાર્ટ), પો: ઉધના, જિ: સુરત, ગુજરાત -, 394210"
+    }
+  },
+  "hindi": {
+    "names": {
+      "shyam": "श्याम",
+      "sundar": "सुन्दर",
+      "varude sanjay": "वारूडे संजय"
+    },
+    "addresses": {
+      "rajasthan -": "जिला: जयपुर",
+      "dist: jaipur": "डाकघर: फुलेरा",
+      "s/o: shankar lal": "S/O: शंकर लाल",
+      "joshi bhawan": "जोशी भवन",
+      "ward no. 5": "वार्ड न. 5",
+      "purana": "पुराना",
+      "phulera": "फुलेरा",
+      "po: phulera": "डाकघर: फुलेरा",
+      "30, shivalik residency, dindoli, surat (m corp+og) (part), po: udhna, dist: surat, gujarat -, 394210": "30, शिवालिक रेसिडेंसी, डिंडोली, सूरत (एम कॉर्प+ओजी) (पार्ट), पीओ: उधना, जिला: सूरत, गुजरात -, 394210"
+    }
+  },
+  "telugu": {
+    "names": {
+      "o": "ఓ",
+      "bhundaram": "బుందారం",
+      "chowdary": "చౌదరి",
+      "o bhundaram chowdary": "ఓ బుందారంచౌదరి"
+    },
+    "addresses": {
+      "c/o b ogadram": "C/O బి ఓగాద్రం",
+      "house number 17-35": "హౌస్ నంబర్ 17-35",
+      "sardar street": "సర్దార్ వీధి",
+      "near panagal gangamma temple": "పానగల్ గంగమ్మ దేవాలయం దగ్గర",
+      "srikalahasti": "శ్రీకాళహస్తి",
+      "po: panagal": "పో: పానగల్",
+      "dist: chittoor": "జిల్లా: చిత్తూరు",
+      "andhra pradesh -": "ఆంధ్ర ప్రదేశ్ -",
+      "c/o b ogadram, house number 17-35, sardar street, near panagal gangamma temple, srikalahasti, srikalahasti, po: panagal, dist: chittoor, andhra pradesh -, 517640": "C/O బిఓగాదం, హౌస్ నంబర్ 17-35, సర్దార్ వీధి, పానగల్ గంగమ్మ దేవాలయం దగ్గర, శ్రీకాళహస్తి, శ్రీకాళహస్తి, పో: పానగల్, జిల్లా: చిత్తూరు, ఆంధ్ర ప్రదేశ్ -, 517640"
+    }
+  },
+  "marathi": {
+    "names": {
+      "chetan": "चेतन",
+      "prabhakar": "प्रभाकर",
+      "wagh": "वाघ",
+      "chouhan": "चौहाण",
+      "umesh": "उमेश",
+      "chouhan umesh": "चौहाण उमेश"
+    },
+    "addresses": {
+      "maharashtra -": "जिल्हा: जळगाव",
+      "dist: jalgaon": "पोस्ट: एकलहरे",
+      "c/o ganesh umesh chavhan": "C/O गणेश उमेश चव्हाण",
+      "at post zodga": "मु.पो. झोडगा",
+      "zodga": "झोडगा",
+      "po: zodga": "पो: झोडगा",
+      "dist: akola": "जि: अकोला",
+      "c/o ganesh umesh chavhan, 91, at post zodga, zodga, po: zodga, dist: akola, maharashtra -, 444405": "सी/ओ गणेश उमेश चव्हाण, 91, मु. पो. झोडगा, झोडगा, पो. झोडगा, जि. अकोला, महाराष्ट्र -, 444405"
+    }
+  }
+}

@@ -1,0 +1,149 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/forms";
+@plugin "@tailwindcss/container-queries";
+
+@theme {
+  --color-background: #f7f9fb;
+  --color-outline: #737686;
+  --color-on-tertiary-fixed: #07006c;
+  --color-on-background: #191c1e;
+  --color-error: #ba1a1a;
+  --color-on-primary-container: #eeefff;
+  --color-on-primary-fixed-variant: #003ea8;
+  --color-on-primary: #ffffff;
+  --color-surface-container-highest: #e0e3e5;
+  --color-on-tertiary-fixed-variant: #2f2ebe;
+  --color-surface-container: #eceef0;
+  --color-primary-fixed-dim: #b4c5ff;
+  --color-tertiary-fixed: #e1e0ff;
+  --color-inverse-on-surface: #eff1f3;
+  --color-on-error-container: #93000a;
+  --color-tertiary-fixed-dim: #c0c1ff;
+  --color-secondary-fixed-dim: #4edea3;
+  --color-surface-container-low: #f2f4f6;
+  --color-on-secondary: #ffffff;
+  --color-primary-fixed: #dbe1ff;
+  --color-on-secondary-container: #00714d;
+  --color-surface-dim: #d8dadc;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-high: #e6e8ea;
+  --color-error-container: #ffdad6;
+  --color-on-tertiary: #ffffff;
+  --color-on-primary-fixed: #00174b;
+  --color-primary: #004ac6;
+  --color-tertiary-container: #585be6;
+  --color-inverse-surface: #2d3133;
+  --color-secondary-fixed: #6ffbbe;
+  --color-on-surface-variant: #434655;
+  --color-on-surface: #191c1e;
+  --color-primary-container: #2563eb;
+  --color-outline-variant: #c3c6d7;
+  --color-tertiary: #3e3fcc;
+  --color-surface-variant: #e0e3e5;
+  --color-on-tertiary-container: #f1eeff;
+  --color-on-secondary-fixed: #002113;
+  --color-on-secondary-fixed-variant: #005236;
+  --color-surface-bright: #f7f9fb;
+  --color-surface: #f7f9fb;
+  --color-secondary: #006c49;
+  --color-secondary-container: #6cf8bb;
+  --color-inverse-primary: #b4c5ff;
+  --color-on-error: #ffffff;
+  --color-surface-tint: #0053db;
+
+  --spacing-md: 16px;
+  --spacing-gutter: 16px;
+  --spacing-container-margin: 24px;
+  --spacing-xl: 32px;
+  --spacing-xs: 4px;
+  --spacing-sm: 12px;
+  --spacing-lg: 24px;
+  --spacing-base: 8px;
+
+  --font-headline-lg: "Inter", sans-serif;
+  --font-headline-md: "Inter", sans-serif;
+  --font-label-sm: "Inter", sans-serif;
+  --font-headline-xl: "Inter", sans-serif;
+  --font-body-lg: "Inter", sans-serif;
+  --font-label-md: "Inter", sans-serif;
+  --font-body-md: "Inter", sans-serif;
+  --font-body-sm: "Inter", sans-serif;
+  --font-headline-xl-mobile: "Inter", sans-serif;
+
+  --text-headline-lg: 24px;
+  --text-headline-lg--line-height: 32px;
+  --text-headline-lg--letter-spacing: -0.01em;
+  --text-headline-lg--font-weight: 600;
+
+  --text-headline-md: 20px;
+  --text-headline-md--line-height: 28px;
+  --text-headline-md--font-weight: 600;
+
+  --text-label-sm: 12px;
+  --text-label-sm--line-height: 16px;
+  --text-label-sm--font-weight: 500;
+
+  --text-headline-xl: 36px;
+  --text-headline-xl--line-height: 44px;
+  --text-headline-xl--letter-spacing: -0.02em;
+  --text-headline-xl--font-weight: 700;
+
+  --text-body-lg: 18px;
+  --text-body-lg--line-height: 28px;
+  --text-body-lg--font-weight: 400;
+
+  --text-label-md: 14px;
+  --text-label-md--line-height: 20px;
+  --text-label-md--font-weight: 600;
+
+  --text-body-md: 16px;
+  --text-body-md--line-height: 24px;
+  --text-body-md--font-weight: 400;
+
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 20px;
+  --text-body-sm--font-weight: 400;
+
+  --text-headline-xl-mobile: 28px;
+  --text-headline-xl-mobile--line-height: 34px;
+  --text-headline-xl-mobile--font-weight: 700;
+}
+
+@layer base {
+  body {
+    background: radial-gradient(at 0% 0%, rgba(219, 234, 254, 0.4) 0px, transparent 50%), 
+                radial-gradient(at 100% 0%, rgba(220, 252, 231, 0.3) 0px, transparent 50%), 
+                radial-gradient(at 50% 100%, rgba(254, 243, 199, 0.3) 0px, transparent 50%), 
+                #f8fafc;
+    @apply text-on-background font-body-md min-h-screen;
+  }
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.glass-card {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.02);
+}
+.active-nav-glow {
+  box-shadow: 0 0 15px rgba(0, 74, 198, 0.15);
+}
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+/* 5-minute auto-delete warning progress bar */
+@keyframes shrink {
+  from { width: 100%; }
+  to   { width: 0%;   }
+}
