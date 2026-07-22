@@ -601,8 +601,14 @@ export function crossReferenceRepairLocalName(englishName: string, localName: st
       }
     }
     // Rule for Lilesh/Lilesh -> લીલેશ (long-i and e-matra dropped shows as "ललेश" or "ललश")
-    if ((engLower.includes('lilesh') || engLower.includes('lilesh')) && /લ\s*લ\s*[ે]?\s*શ|લ\s*[ે]\s*શ/.test(repaired)) {
-      repaired = repaired.replace(/લ\s*લ\s*[ે]?\s*શ|લ\s*[ે]\s*શ/, 'લીલેશ');
+    if (engLower.includes('lilesh') && /લ\s*લ\s*[ે]?\s*શ|લ\s*[ે]\s*શ/.test(repaired)) {
+      // Only replace if it hasn't already been fully repaired to avoid "લીલીલેશ"
+      if (!repaired.includes('લીલેશ')) {
+        repaired = repaired.replace(/લ\s*લ\s*[ે]?\s*શ|લ\s*[ે]\s*શ/, 'લીલેશ');
+      }
+      // Cleanup just in case "લી" was separated by space and we created "લી લીલેશ"
+      repaired = repaired.replace(/લી\s*લીલેશ/g, 'લીલેશ');
+      repaired = repaired.replace(/લી\s*લી\s*લેશ/g, 'લીલેશ');
     }
     // Rule for Patil -> પાટીલ (pdf strips long-i matra, shows as "પાટલ" or "પટલ" or "પાટીલ")
     if (engLower.includes('patil')) {
@@ -2268,29 +2274,7 @@ Return ONLY a valid JSON object:
         extractedData.localAddress = fixGujaratiToDevanagariShift(extractedData.localAddress || '');
       }
 
-      // Automatically translate English Name and Address if Gemini is available
-      const geminiApiKey = null; // Disabled for offline-only mode
-      const isGeminiDisabled = true;
-      if (currentLang !== 'english' && geminiApiKey && !isGeminiDisabled) {
-        try {
-          console.log(`[API/Extract] Translating details to ${currentLang} using Gemini...`);
-          const [translatedName, translatedAddress] = await Promise.all([
-            translateTextWithGemini(extractedData.name || '', currentLang, geminiApiKey),
-            translateTextWithGemini(extractedData.address || '', currentLang, geminiApiKey)
-          ]);
-          if (translatedName) {
-            console.log(`[API/Extract] Gemini name translation: "${extractedData.localName}" -> "${translatedName}"`);
-            extractedData.localName = translatedName;
-          }
-          if (translatedAddress) {
-            console.log(`[API/Extract] Gemini address translation: "${extractedData.localAddress}" -> "${translatedAddress}"`);
-            extractedData.localAddress = translatedAddress;
-          }
-          aiRepaired = true;
-        } catch (transErr: any) {
-          console.error('[API/Extract] Gemini address translation failed:', transErr.message);
-        }
-      }
+
 
       extractedData.dobLine           = getCorrectDobLine(extractedData.dob || '', currentLang);
       extractedData.genderLine        = getCorrectGenderLine('', extractedData.gender || 'Male', currentLang);
@@ -2361,7 +2345,9 @@ Return ONLY a valid JSON object:
       }
 
       if (currentLang !== 'english') {
-        finalLocalName = crossReferenceRepairLocalName(extractedData.name || '', finalLocalName, currentLang);
+        if (!aiRepaired) {
+          finalLocalName = crossReferenceRepairLocalName(extractedData.name || '', finalLocalName, currentLang);
+        }
         finalLocalAddress = repairLocalAddress(extractedData.address || '', finalLocalAddress, currentLang);
       }
 
