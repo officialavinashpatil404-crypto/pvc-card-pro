@@ -98,6 +98,15 @@ export class AadhaarParser extends BaseParser {
   extractName(): string | null {
     console.log('[AadhaarParser] Running Name extraction rules');
     
+    // ── PRIORITY 0: QR Code name (most accurate — direct from UIDAI) ──
+    if (this.qrData && this.qrData.name) {
+      const qrName = this.qrData.name.trim();
+      if (qrName.length >= 2 && !/\d/.test(qrName)) {
+        console.log(`[AadhaarParser] Name found via QR code attributes: ${qrName}`);
+        return qrName;
+      }
+    }
+
     const lines = this.rawText.split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0);
@@ -106,7 +115,7 @@ export class AadhaarParser extends BaseParser {
       'enrolment', 'enrollment', 'phone', 'mobile', 'email', 'unique', 'authority', 
       'government', 'india', 'government of india', 'address', 'signature', 'date',
       'year of birth', 'yob', 'dob', 'male', 'female', 'transgender', 'information',
-      'download', 'generation', 'help', 'valid', 'identity'
+      'download', 'generation', 'help', 'valid', 'identity', 'aadhaar', 'virtual', 'vid'
     ];
 
     const isNoise = (text: string): boolean => {
@@ -114,20 +123,31 @@ export class AadhaarParser extends BaseParser {
       return noiseKeywords.some(kw => lower.includes(kw)) || /\d/.test(text);
     };
 
+    // Strict guard: MUST NOT be a relationship line (W/O, S/O, D/O, C/O, Husband of, Wife of, Care of, etc.)
+    const isRelationshipLine = (text: string): boolean => {
+      return /^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|Husband\s+of|Father\s+of|CO|WO|SO|DO)\b/i.test(text.trim());
+    };
+
     const isEnglish = (text: string): boolean => {
       // Check if it contains mainly English letters, spaces, and dots
       return /^[A-Za-z\s\.]+$/.test(text);
     };
 
-    // Heuristic 1: Find line after 'To' or 'To,'
-    for (let i = 0; i < lines.length - 1; i++) {
+    // Find address section boundary so we NEVER parse names from the back card address block
+    const addressLineIdx = lines.findIndex(l => /^Address\s*[:/]/i.test(l) || /^पता\s*[:/]/i.test(l) || /^(સરનામું|முகவரி|చిరునామా|విಳಾಸ|മേൽവിലാസം|ঠিকানা|ଠିକଣା|ਪਤਾ)\s*[:/]/i.test(l));
+    const searchLimit = addressLineIdx > 0 ? addressLineIdx : lines.length;
+
+    // Heuristic 1: Find line after 'To' or 'To,' (before address)
+    for (let i = 0; i < searchLimit - 1; i++) {
       if (/^to\b,?/i.test(lines[i])) {
-        // Look at subsequent lines (up to 2 lines)
         for (let offset = 1; offset <= 2; offset++) {
-          const candidate = lines[i + offset];
-          if (candidate && isEnglish(candidate) && !isNoise(candidate) && candidate.split(/\s+/).length >= 2) {
-            console.log(`[AadhaarParser] Name found via 'To' block: ${candidate}`);
-            return candidate;
+          const candidateIndex = i + offset;
+          if (candidateIndex < searchLimit) {
+            const candidate = lines[candidateIndex];
+            if (candidate && isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
+              console.log(`[AadhaarParser] Name found via 'To' block: ${candidate}`);
+              return candidate;
+            }
           }
         }
       }
@@ -138,21 +158,21 @@ export class AadhaarParser extends BaseParser {
     const labelMatch = this.rawText.match(nameLabelRegex);
     if (labelMatch) {
       const candidate = labelMatch[1].trim();
-      if (isEnglish(candidate) && !isNoise(candidate) && candidate.split(/\s+/).length >= 2) {
+      if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
         console.log(`[AadhaarParser] Name found via label: ${candidate}`);
         return candidate;
       }
     }
 
-    // Heuristic 3: Look above DOB/Birth lines
-    for (let i = 0; i < lines.length; i++) {
+    // Heuristic 3: Look ABOVE DOB/Birth lines (before address)
+    for (let i = 0; i < searchLimit; i++) {
       if (/(?:DOB|Year\s*of\s*Birth|YOB|जन्म\s*तिथि|जन्म\s*वर्ष)/i.test(lines[i])) {
         // Look up to 3 lines above
         for (let offset = 1; offset <= 3; offset++) {
           const candidateIndex = i - offset;
           if (candidateIndex >= 0) {
             const candidate = lines[candidateIndex];
-            if (isEnglish(candidate) && !isNoise(candidate) && candidate.split(/\s+/).length >= 2) {
+            if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
               console.log(`[AadhaarParser] Name found above DOB block: ${candidate}`);
               return candidate;
             }
@@ -161,11 +181,23 @@ export class AadhaarParser extends BaseParser {
       }
     }
 
-    // Fallback: look for the first valid title-case English phrase of 2-3 words that is not noise
-    const genericNameMatch = this.rawText.match(/\b([A-Z][a-z]+\s[A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/g);
+    // Heuristic 4: Scan all lines before address block for the first clean English title-case name
+    for (let i = 0; i < searchLimit; i++) {
+      const candidate = lines[i];
+      if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
+        if (/^[A-Z][A-Za-z\s\.]+$/.test(candidate) && !candidate.toLowerCase().startsWith('to')) {
+          console.log(`[AadhaarParser] Name found via pre-address scan: ${candidate}`);
+          return candidate;
+        }
+      }
+    }
+
+    // Fallback: look for English title-case phrase before address block
+    const preAddressText = lines.slice(0, searchLimit).join('\n');
+    const genericNameMatch = preAddressText.match(/\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\b/g);
     if (genericNameMatch) {
       for (const candidate of genericNameMatch) {
-        if (!isNoise(candidate) && candidate.split(/\s+/).length >= 2) {
+        if (!isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
           console.log(`[AadhaarParser] Name found via fallback generic regex: ${candidate}`);
           return candidate;
         }
@@ -658,29 +690,34 @@ export class AadhaarParser extends BaseParser {
 
     const isNonAscii = (text: string): boolean => /[^\x00-\x7F]/.test(text);
     const isEnglishOnly = (text: string): boolean => /^[A-Za-z\s\.]+$/.test(text);
-    // Guard: must not be purely digits/numbers (Aadhaar number line, etc.)
     const isNotNumberLine = (text: string): boolean => !/^[\d\s\-]+$/.test(text);
-    // Guard: must not be an address label keyword
     const isNotAddrKeyword = (text: string): boolean =>
-      !/(Address|पता|சரனாமு|முகவரி|ঠিকানা|ਪਤਾ|ଠିକଣା|சரநாமு|சரனாமு)/i.test(text);
+      !/(Address|पता|સરનામું|સરનામુ|முகவரி|చిరునామా|విళಾಸ|മേൽവിലാസം|ঠিকানা|ଠିକଣা|ਪਤਾ)/i.test(text);
 
-    // Heuristic 1: Look for the exact English name line, then check line above AND below
-    for (let i = 0; i < lines.length; i++) {
+    const isNotRelationship = (text: string): boolean =>
+      !/^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|पति|पिता|आत्मज|पत्नी|સુપુત્ર|સુપુત્રી|કેર\s+ઓફ|પત્ની|આત્મજ|દ્વારા|द्वारा)/i.test(text);
+
+    // Find address section boundary so we NEVER parse local names from the back card address block
+    const addressLineIdx = lines.findIndex(l => /^Address\s*[:/]/i.test(l) || /^(पता|સરનામું|முகவரி|చిరునామా|విళಾಸ|മേൽവിലാസം|ঠিকানা|ଠିକଣা|ਪਤਾ)\s*[:/]/i.test(l));
+    const searchLimit = addressLineIdx > 0 ? addressLineIdx : lines.length;
+
+    // Heuristic 1: Look for the exact English name line, then check line above AND below (before address)
+    for (let i = 0; i < searchLimit; i++) {
       const lineUpper = lines[i].toLowerCase();
       const nameUpper = englishName.toLowerCase();
       if (lineUpper === nameUpper || lineUpper.includes(nameUpper) || nameUpper.includes(lineUpper.replace(/[^a-z ]/gi, '').trim())) {
         // Check line above
         if (i > 0) {
           const prevLine = lines[i - 1];
-          if (isNonAscii(prevLine) && prevLine.length >= 3 && isNotNumberLine(prevLine) && isNotAddrKeyword(prevLine)) {
+          if (isNonAscii(prevLine) && prevLine.length >= 2 && isNotNumberLine(prevLine) && isNotAddrKeyword(prevLine) && isNotRelationship(prevLine)) {
             console.log(`[AadhaarParser] Local Name found above English name: ${prevLine}`);
             return this.normalizeIndicText(prevLine);
           }
         }
         // Check line below
-        if (i < lines.length - 1) {
+        if (i < searchLimit - 1) {
           const nextLine = lines[i + 1];
-          if (isNonAscii(nextLine) && !isEnglishOnly(nextLine) && nextLine.length >= 3 && isNotNumberLine(nextLine) && isNotAddrKeyword(nextLine)) {
+          if (isNonAscii(nextLine) && !isEnglishOnly(nextLine) && nextLine.length >= 2 && isNotNumberLine(nextLine) && isNotAddrKeyword(nextLine) && isNotRelationship(nextLine)) {
             console.log(`[AadhaarParser] Local Name found below English name: ${nextLine}`);
             return this.normalizeIndicText(nextLine);
           }
@@ -688,34 +725,17 @@ export class AadhaarParser extends BaseParser {
       }
     }
 
-    // Heuristic 2: Look 2-3 lines above/below the English name
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].toLowerCase().includes(englishName.toLowerCase())) {
-        for (const offset of [-2, 2, -3, 3]) {
-          const idx = i + offset;
-          if (idx >= 0 && idx < lines.length) {
-            const candidate = lines[idx];
-            if (isNonAscii(candidate) && candidate.length >= 3
-                && !candidate.match(/\d{4}\s*\d{4}\s*\d{4}/)
-                && isNotAddrKeyword(candidate)) {
-              console.log(`[AadhaarParser] Local Name found at offset ${offset} from English name: ${candidate}`);
-              return this.normalizeIndicText(candidate);
-            }
-          }
-        }
-      }
-    }
-
-    // Heuristic 3: Find any non-ASCII line that appears near a DOB line
-    for (let i = 0; i < lines.length; i++) {
-      if (/(?:DOB|Date\s*of\s*Birth|YOB|Year\s*of\s*Birth)/i.test(lines[i])) {
+    // Heuristic 2: Look near DOB line (before address)
+    for (let i = 0; i < searchLimit; i++) {
+      if (/(?:DOB|Date\s*of\s*Birth|YOB|Year\s*of\s*Birth|जन्म\s*तिथि|જન્મ\s*તારીખ)/i.test(lines[i])) {
         for (let offset = 1; offset <= 4; offset++) {
           const idx = i - offset;
           if (idx >= 0) {
             const candidate = lines[idx];
-            if (isNonAscii(candidate) && candidate.length >= 3
+            if (isNonAscii(candidate) && candidate.length >= 2
                 && !candidate.match(/\d{4}/)
-                && isNotAddrKeyword(candidate)) {
+                && isNotAddrKeyword(candidate)
+                && isNotRelationship(candidate)) {
               console.log(`[AadhaarParser] Local Name found near DOB line: ${candidate}`);
               return this.normalizeIndicText(candidate);
             }
@@ -1068,15 +1088,13 @@ export class AadhaarParser extends BaseParser {
 
 
   async parse(): Promise<import('./BaseParser').ExtractedDocumentData> {
-    const baseData = await super.parse();
-
-    // ── CRITICAL: Decode QR FIRST so qrData is available for local field extraction ──
-    // extractLocalName() and extractLocalAddress() need this.qrData to use QR lname/laddress.
-    // Previously qrData was only set as a side-effect of extractQRCode() which ran in super.parse().
-    // Now we ensure decodeQRCode() has been called before proceeding.
+    // ── CRITICAL: Extract assets & decode QR code FIRST so qrData is available for extractName(), extractLocalName() etc. ──
+    await this.extractAssets();
     if (this.extractedQR && !this.qrData) {
       await this.decodeQRCode();
     }
+
+    const baseData = await super.parse();
 
     return {
       ...baseData,
