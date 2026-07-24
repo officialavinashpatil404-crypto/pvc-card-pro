@@ -3,7 +3,7 @@ import { createClient } from '@/utils/supabase/server';
 import { logger } from '@/utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getBrowser, TEMPLATE_FRONT_BASE64, TEMPLATE_BACK_BASE64 } from '@/utils/browserSingleton';
+import { getBrowser, TEMPLATE_FRONT_BASE64, TEMPLATE_BACK_BASE64, BAAL_TEMPLATE_FRONT_BASE64, BAAL_TEMPLATE_BACK_BASE64 } from '@/utils/browserSingleton';
 import * as QRCode from 'qrcode';
 
 
@@ -151,10 +151,17 @@ const RELATION_MAPPING: Record<string, RelationAssets> = {
 function fixLocalCoPrefix(localAddress: string, englishAddress: string): string {
   if (!localAddress || !englishAddress) return localAddress;
 
+  const trimmedLocal = localAddress.trim();
+  // Preserve existing Indic relationship prefixes if already present
+  const indicPrefixCheck = /^(?:ના\s+દ્વારા|દ્વારા|द्वारा|आत्मज|સુપુત્ર|સુપુત્રી|પુત્ર|પુત્રી|પત્ની|पुत्र|पुत्री|पत्नी|केयर\s+ऑफ|કેર\s+ઓફ|મારફતે)[:\s]*/i;
+  if (indicPrefixCheck.test(trimmedLocal)) {
+    return trimmedLocal;
+  }
+
   const engCoMatch = englishAddress.trim().match(
     /^(C\/O|W\/O|S\/O|D\/O|H\/O|F\/O|C\\.O\\.|W\\.O\\.|S\\.O\\.|D\\.O\\.)/i
   );
-  if (!engCoMatch) return localAddress;
+  if (!engCoMatch) return trimmedLocal;
 
   const rel = engCoMatch[1].toUpperCase().replace(/\./g, '');
   const { lang } = detectLanguage(localAddress);
@@ -166,20 +173,21 @@ function fixLocalCoPrefix(localAddress: string, englishAddress: string): string 
   else if (rel === 'DO') localPrefix = mapping.do;
   else if (rel === 'CO') localPrefix = mapping.co;
 
-  if (!localPrefix) return localAddress;
+  if (!localPrefix) return trimmedLocal;
 
   const allPrefixes = Object.values(RELATION_MAPPING)
     .map(m => [m.so, m.wo, m.do, m.co])
     .flat()
     .map(p => p.replace(':', '[:\\s]*'))
+    .concat(['ના\\s+દ્વારા[:\\s]*', 'દ્વારા[:\\s]*', 'द्वारा[:\\s]*', 'મારફતે[:\\s]*'])
     .join('|');
   const prefixRegex = new RegExp(`^(${allPrefixes}|C\\/O|W\\/O|S\\/O|D\\/O|H\\/O|F\\/O|C\\\\.O\\\\.|W\\\\.O\\\\.|S\\\\.O\\\\.|D\\\\.O\\\\.)[:\\\\s]*`, 'i');
 
-  if (prefixRegex.test(localAddress.trim())) {
-    return localAddress.trim().replace(prefixRegex, `${localPrefix} `);
+  if (prefixRegex.test(trimmedLocal)) {
+    return trimmedLocal.replace(prefixRegex, `${localPrefix} `);
   }
 
-  return `${localPrefix} ${localAddress.trim()}`;
+  return `${localPrefix} ${trimmedLocal}`;
 }
 
 export async function POST(request: NextRequest) {
@@ -475,6 +483,9 @@ export async function POST(request: NextRequest) {
       }
       console.log(`[BAAL_AADHAAR] dob="${dob}" isBaalAadhaar=${isBaalAadhaar}`);
 
+      const curFrontTemplate = (isBaalAadhaar && BAAL_TEMPLATE_FRONT_BASE64) ? BAAL_TEMPLATE_FRONT_BASE64 : TEMPLATE_FRONT_BASE64;
+      const curBackTemplate  = (isBaalAadhaar && BAAL_TEMPLATE_BACK_BASE64)  ? BAAL_TEMPLATE_BACK_BASE64  : TEMPLATE_BACK_BASE64;
+
       htmlTemplate = generateAadhaarPVCHTML({
         name,
         localName: hasLocalLanguage ? localName : '',
@@ -489,8 +500,8 @@ export async function POST(request: NextRequest) {
         hasLocalLanguage,
         issueDate,
         detailsAsOn,
-        frontTemplateBase64,
-        backTemplateBase64,
+        frontTemplateBase64: curFrontTemplate,
+        backTemplateBase64:  curBackTemplate,
         photoBase64,
         qrBase64,
         localFontReg,
@@ -1079,7 +1090,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .warning-box {
       position: absolute;
       left: 242px;
-      top: ${isBaalAadhaar ? '398px' : '360px'};
+      top: 360px;
       width: 724px;
       border: 2px solid #cc0000;
       padding: 6px 9px;
@@ -1111,52 +1122,44 @@ function generateAadhaarPVCHTML(params: any): string {
     /* ── Baal Aadhaar: right-edge vertical strip ── */
     .baal-strip {
       position: absolute;
-      right: 13px;
-      top: 130px;
-      bottom: 75px;
-      width: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: visible;
-      z-index: 200;
-    }
-    .baal-strip span {
-      display: block;
+      right: 18px;
+      top: 330px;
+      transform: translate(50%, -50%) rotate(90deg);
+      transform-origin: center;
       white-space: nowrap;
       font-family: '${params.localFontFamily}-Bold', 'NotoSerif-Bold', sans-serif;
-      font-size: 20px;
+      font-size: 22px;
       font-weight: bold;
       color: #cc0000;
-      letter-spacing: 3px;
-      transform: rotate(-90deg);
-      transform-origin: center;
+      letter-spacing: 2px;
+      text-align: center;
+      z-index: 200;
     }
 
     /* ── Baal Aadhaar: validity notice box ── */
     .baal-notice {
       position: absolute;
       right: 48px;
-      top: 323px;
-      max-width: 370px;
+      top: 324px;
       border: 1.5px solid #cc0000;
-      padding: 3px 7px;
+      padding: 3px 8px;
       box-sizing: border-box;
-      background: transparent;
+      background: #ffffff;
       font-family: '${params.localFontFamily}-Bold', 'NotoSerif-Bold', sans-serif;
       font-size: 12.5px;
+      font-weight: bold;
       color: #cc0000;
       line-height: 1.3;
-      white-space: normal;
+      white-space: nowrap;
       text-align: center;
+      z-index: 150;
     }
 
     .aadhaar-number-block {
       width: 600px;
-      height: 80px;
       position: absolute;
       left: 50%;
-      bottom: 74px;
+      bottom: 70px; /* moved down to keep layout stable */
       transform: translateX(-50%);
       display: flex;
       flex-direction: column;
@@ -1166,7 +1169,43 @@ function generateAadhaarPVCHTML(params: any): string {
     }
 
     #card-back .aadhaar-number-block {
-      bottom: 100px;
+      bottom: 80px; /* slightly higher on back for consistent spacing */
+    }
+
+    /* ── UIDAI Contact Info (back card only) ── */
+    .uidai-contact {
+      position: absolute;
+      bottom: 12px; /* give a bit more margin from card edge */
+      left: 0;
+      width: 100%;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      font-family: 'NotoSerif-Regular';
+      font-size: 15px; /* larger for readability */
+      color: #000000;
+      line-height: 1.2;
+      z-index: 100;
+    }
+    .uidai-contact-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .uidai-contact-icon {
+      font-size: 16px; /* bigger icons */
+    }
+    .uidai-contact-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .uidai-contact-icon {
+      font-size: 14px;
     }
 
     .aadhaar-num-text {
@@ -1309,8 +1348,8 @@ function generateAadhaarPVCHTML(params: any): string {
       if (!block) return;
 
       const isBack = card.id === 'card-back';
-      const defaultBottom = isBack ? 100 : 74;
-      const minBottom = isBack ? 92 : 68;
+      const defaultBottom = isBack ? 60 : 52;
+      const minBottom = isBack ? 50 : 42;
 
       const collideSelectors = [
         '.local-address',
@@ -1450,7 +1489,7 @@ function generateAadhaarPVCHTML(params: any): string {
     </div>
 
     <!-- ── Baal Aadhaar: right-edge vertical strip ── -->
-    ${ isBaalAadhaar ? `<div class="baal-strip"><span>${ baalStripText }</span></div>` : '' }
+    ${ isBaalAadhaar ? `<div class="baal-strip">${ baalStripText }</div>` : '' }
 
     <!-- ── Bottom Slogan ── -->
     <div class="slogan-container">${ formattedSlogan }</div>
@@ -1487,6 +1526,22 @@ function generateAadhaarPVCHTML(params: any): string {
     <div class="aadhaar-number-block">
       <div class="aadhaar-num-text">${ aadhaarNum }</div>
       ${ vid ? `<div class="vid-num-text">VID: ${vid}</div>` : '' }
+    </div>
+
+    <!-- ── UIDAI Contact Info ── -->
+    <div class="uidai-contact">
+      <div class="uidai-contact-item">
+        <span class="uidai-contact-icon">&#128222;</span>
+        <span>1947</span>
+      </div>
+      <div class="uidai-contact-item">
+        <span class="uidai-contact-icon">&#127760;</span>
+        <span>www.uidai.gov.in</span>
+      </div>
+      <div class="uidai-contact-item">
+        <span class="uidai-contact-icon">&#9993;</span>
+        <span>help@uidai.gov.in</span>
+      </div>
     </div>
   </div>
 
