@@ -1111,35 +1111,44 @@ function generateAadhaarPVCHTML(params: any): string {
     /* ── Baal Aadhaar: right-edge vertical strip ── */
     .baal-strip {
       position: absolute;
-      right: -28px;
-      top: 50%;
-      transform: translateY(-50%) rotate(90deg);
-      transform-origin: center;
+      right: 13px;
+      top: 130px;
+      bottom: 75px;
+      width: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: visible;
+      z-index: 200;
+    }
+    .baal-strip span {
+      display: block;
       white-space: nowrap;
       font-family: '${params.localFontFamily}-Bold', 'NotoSerif-Bold', sans-serif;
       font-size: 20px;
       font-weight: bold;
       color: #cc0000;
-      letter-spacing: 2px;
-      text-align: center;
-      z-index: 200;
+      letter-spacing: 3px;
+      transform: rotate(-90deg);
+      transform-origin: center;
     }
 
     /* ── Baal Aadhaar: validity notice box ── */
     .baal-notice {
       position: absolute;
-      left: 242px;
-      top: 362px;
-      width: 724px;
+      right: 48px;
+      top: 323px;
+      max-width: 370px;
       border: 1.5px solid #cc0000;
-      padding: 4px 8px;
+      padding: 3px 7px;
       box-sizing: border-box;
       background: transparent;
       font-family: '${params.localFontFamily}-Bold', 'NotoSerif-Bold', sans-serif;
-      font-size: 13px;
+      font-size: 12.5px;
       color: #cc0000;
       line-height: 1.3;
-      white-space: nowrap;
+      white-space: normal;
+      text-align: center;
     }
 
     .aadhaar-number-block {
@@ -1441,7 +1450,7 @@ function generateAadhaarPVCHTML(params: any): string {
     </div>
 
     <!-- ── Baal Aadhaar: right-edge vertical strip ── -->
-    ${ isBaalAadhaar ? `<div class="baal-strip">${ baalStripText }</div>` : '' }
+    ${ isBaalAadhaar ? `<div class="baal-strip"><span>${ baalStripText }</span></div>` : '' }
 
     <!-- ── Bottom Slogan ── -->
     <div class="slogan-container">${ formattedSlogan }</div>
