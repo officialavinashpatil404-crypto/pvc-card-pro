@@ -453,6 +453,28 @@ export async function POST(request: NextRequest) {
         });
       }
     } else {
+      // ── Baal Aadhaar detection: child under 5 years old ──────────────────────
+      let isBaalAadhaar = false;
+      if (dob) {
+        const dobStr = String(dob).trim();
+        // Support DD/MM/YYYY, DD-MM-YYYY, YYYY formats
+        const parts = dobStr.match(/(\d{2})[\/-](\d{2})[\/-](\d{4})/);
+        const yearOnly = dobStr.match(/^(\d{4})$/);
+        let birthDate: Date | null = null;
+        if (parts) {
+          birthDate = new Date(Number(parts[3]), Number(parts[2]) - 1, Number(parts[1]));
+        } else if (yearOnly) {
+          birthDate = new Date(Number(yearOnly[1]), 0, 1);
+        }
+        if (birthDate && !isNaN(birthDate.getTime())) {
+          const now = new Date();
+          const ageMs = now.getTime() - birthDate.getTime();
+          const ageYears = ageMs / (1000 * 60 * 60 * 24 * 365.25);
+          isBaalAadhaar = ageYears < 5;
+        }
+      }
+      console.log(`[BAAL_AADHAAR] dob="${dob}" isBaalAadhaar=${isBaalAadhaar}`);
+
       htmlTemplate = generateAadhaarPVCHTML({
         name,
         localName: hasLocalLanguage ? localName : '',
@@ -477,7 +499,8 @@ export async function POST(request: NextRequest) {
         localFontFamily: fontFamily,
         serifReg,
         serifBold,
-        lang
+        lang,
+        isBaalAadhaar
       });
     }
 
@@ -671,6 +694,7 @@ function generateAadhaarPVCHTML(params: any): string {
   const localAddress      = params.localAddress || '';
   const address           = params.address || '';
   const hasLocalLanguage  = !!params.hasLocalLanguage;
+  const isBaalAadhaar     = !!params.isBaalAadhaar;
 
   let displayLocalAddress = localAddress;
   let displayLocalAddressLabel = params.localAddressLabel || 'Address:';
@@ -778,6 +802,40 @@ function generateAadhaarPVCHTML(params: any): string {
   }
 
   const selectedWarning = warnings[langKey] || warnings.english;
+
+  // ── Baal Aadhaar: right-edge vertical strip label + notice box text ─────────
+  const BAAL_STRIP: Record<string, string> = {
+    gujarati:  'બાલ આધાર',
+    hindi:     'बाल आधार',
+    marathi:   'बाल आधार',
+    tamil:     'குழந்தை ஆதார்',
+    telugu:    'బాల్ ఆధార్',
+    kannada:   'ಬಾಲ್ ಆಧಾರ್',
+    malayalam: 'ബാൽ ആധാർ',
+    bengali:   'বাল আধার',
+    assamese:  'বাল আধাৰ',
+    punjabi:   'ਬਾਲ ਆਧਾਰ',
+    odia:      'ବାଲ ଆଧାର',
+    urdu:      'بال آدھار',
+    english:   'Baal Aadhaar',
+  };
+  const BAAL_NOTICE: Record<string, string> = {
+    gujarati:  'આ આધાર માત્ર 5 વર્ષની ઉંમર સુધીજ માન્ય છે.',
+    hindi:     'यह आधार 5 वर्ष की उम्र तक ही मान्य है।',
+    marathi:   'हा आधार फक्त 5 वर्षांच्या वयापर्यंत वैध आहे.',
+    tamil:     'இந்த ஆதார் 5 வயது வரை மட்டுமே செல்லுபடியாகும்.',
+    telugu:    'ఈ ఆధార్ 5 సంవత్సరాల వయస్సు వరకు మాత్రమే చెల్లుతుంది.',
+    kannada:   'ಈ ಆಧಾರ್ 5 ವರ್ಷ ವಯಸ್ಸಿನವರೆಗೆ ಮಾತ್ರ ಮಾನ್ಯವಾಗಿರುತ್ತದೆ.',
+    malayalam: 'ഈ ആധാർ 5 വയസ്സ് വരെ മാത്രം സാധുതയുള്ളതാണ്.',
+    bengali:   'এই আধার শুধুমাত্র ৫ বছর বয়স পর্যন্ত বৈধ।',
+    assamese:  'এই আধাৰ মাত্ৰ ৫ বছৰ বয়স পৰ্যন্ত বৈধ।',
+    punjabi:   'ਇਹ ਆਧਾਰ ਸਿਰਫ਼ 5 ਸਾਲ ਦੀ ਉਮਰ ਤੱਕ ਹੀ ਮਾਨਤਾ ਪ੍ਰਾਪਤ ਹੈ।',
+    odia:      'ଏହି ଆଧାର ମାତ୍ର 5 ବର୍ଷ ବୟସ ପର୍ଯ୍ୟନ୍ତ ବୈଧ।',
+    urdu:      'یہ آدھار صرف 5 سال کی عمر تک کے لیے معتبر ہے۔',
+    english:   'This Aadhaar is valid till 5 years of age.',
+  };
+  const baalStripText  = BAAL_STRIP[langKey]  || BAAL_STRIP.english;
+  const baalNoticeText = BAAL_NOTICE[langKey] || BAAL_NOTICE.english;
 
   const SLOGANS: Record<string, string> = {
     gujarati:  'મારો આધાર, મારી ઓળખ',
@@ -1021,7 +1079,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .warning-box {
       position: absolute;
       left: 242px;
-      top: 360px;
+      top: ${isBaalAadhaar ? '398px' : '360px'};
       width: 724px;
       border: 2px solid #cc0000;
       padding: 6px 9px;
@@ -1048,6 +1106,40 @@ function generateAadhaarPVCHTML(params: any): string {
       font-family: 'NotoSerif-Bold';
       font-size: 13px;
       color: #000000;
+    }
+
+    /* ── Baal Aadhaar: right-edge vertical strip ── */
+    .baal-strip {
+      position: absolute;
+      right: -28px;
+      top: 50%;
+      transform: translateY(-50%) rotate(90deg);
+      transform-origin: center;
+      white-space: nowrap;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSerif-Bold', sans-serif;
+      font-size: 20px;
+      font-weight: bold;
+      color: #cc0000;
+      letter-spacing: 2px;
+      text-align: center;
+      z-index: 200;
+    }
+
+    /* ── Baal Aadhaar: validity notice box ── */
+    .baal-notice {
+      position: absolute;
+      left: 242px;
+      top: 362px;
+      width: 724px;
+      border: 1.5px solid #cc0000;
+      padding: 4px 8px;
+      box-sizing: border-box;
+      background: transparent;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSerif-Bold', sans-serif;
+      font-size: 13px;
+      color: #cc0000;
+      line-height: 1.3;
+      white-space: nowrap;
     }
 
     .aadhaar-number-block {
@@ -1333,6 +1425,9 @@ function generateAadhaarPVCHTML(params: any): string {
     <div class="gender-line">${ genderLine }</div>
     ${ mobile ? `<div class="mobile-line">${mobile}</div>` : '' }
 
+    <!-- ── Baal Aadhaar: validity notice (above warning box) ── -->
+    ${ isBaalAadhaar ? `<div class="baal-notice">${ baalNoticeText }</div>` : '' }
+
     <!-- ── Warning Box ── -->
     <div class="warning-box">
       <div class="warning-local">${ selectedWarning.local }</div>
@@ -1344,6 +1439,9 @@ function generateAadhaarPVCHTML(params: any): string {
       <div class="aadhaar-num-text">${ aadhaarNum }</div>
       ${ vid ? `<div class="vid-num-text">VID: ${vid}</div>` : '' }
     </div>
+
+    <!-- ── Baal Aadhaar: right-edge vertical strip ── -->
+    ${ isBaalAadhaar ? `<div class="baal-strip">${ baalStripText }</div>` : '' }
 
     <!-- ── Bottom Slogan ── -->
     <div class="slogan-container">${ formattedSlogan }</div>
