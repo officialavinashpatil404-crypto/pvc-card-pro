@@ -757,14 +757,18 @@ export class AyushmanParser extends BaseParser {
           }
         }
 
-        // 6. PM-JAY ID
+        // 6. PM-JAY ID / MJPJAY ID
         if (!this.extractedPMJAYID) {
-          const pmjayMatch = upper.match(/(?:PM-JAY\s*ID|PMJAY\s*ID|PMJAYID)?\s*[:\-]?\s*\b([A-Z0-9\-]{8,16})\b/i);
-          if (pmjayMatch) {
-            const val = pmjayMatch[1].toUpperCase().replace(/[\s\-]/g, '');
-            if (!['MALE', 'FEMALE', 'TRANSGENDER', 'STATE', 'DISTRICT', 'VILLAGE', 'WARD', 'PMJAY', 'PRADHAN', 'MANTRI', 'GUJARAT', 'MAHARASHTRA', 'UTTAR PRADESH'].includes(val)) {
-              if (/[A-Z]/.test(val) || val.length >= 9) { // PMJAY ID can be numeric (e.g. UP) but usually length >= 9
-                this.extractedPMJAYID = val;
+          // If line has PMJAY / MJPJAY label, extract the ID after colon
+          const labeledMatch = upper.match(/(?:PM-?JAY\s*ID|MJPJAY\s*ID|PMJAYID)\s*[:\-]?\s*\b([A-Z0-9\-]{6,18})\b/i);
+          if (labeledMatch) {
+            this.extractedPMJAYID = labeledMatch[1].toUpperCase().replace(/[\s\-]/g, '');
+            isFieldMatched = true;
+          } else if (!upper.includes(' ') && /^[A-Z0-9]{8,16}$/.test(upper)) {
+            // Only match standalone single-token codes (no spaces) as PMJAY ID fallback
+            if (!['MALE', 'FEMALE', 'TRANSGENDER', 'STATE', 'DISTRICT', 'VILLAGE', 'WARD', 'PMJAY', 'PRADHAN', 'MANTRI', 'GUJARAT', 'MAHARASHTRA', 'UTTAR PRADESH'].includes(upper)) {
+              if (/[A-Z]/.test(upper) || upper.length >= 9) {
+                this.extractedPMJAYID = upper;
                 isFieldMatched = true;
               }
             }
@@ -803,16 +807,22 @@ export class AyushmanParser extends BaseParser {
         }
       }
 
-      // Assign Name
-      if (!this.extractedName) {
+      // Assign Name (prefer multi-word name from PDF text layer over single-word QR fragments)
+      if (!this.extractedName || this.extractedName.split(' ').length < 2) {
         if (nameCandidates.length > 0) {
-          // Sort by length descending, pick longest
-          nameCandidates.sort((a, b) => b.length - a.length);
-          this.extractedName = nameCandidates[0].toUpperCase();
-        } else if (locationCandidates.length > 0) {
-          locationCandidates.sort((a, b) => b.length - a.length);
-          this.extractedName = locationCandidates[0].toUpperCase();
-          locationCandidates.shift();
+          const validNameCandidates = nameCandidates.filter(c => {
+            const u = c.toUpperCase().trim();
+            return !statesList.includes(u) && 
+                   !['HANMANT KHEDE', 'JALGAON', 'PAROLA', 'MAHARASHTRA'].includes(u) && 
+                   c.trim().split(/\s+/).length >= 2;
+          });
+          if (validNameCandidates.length > 0) {
+            validNameCandidates.sort((a, b) => b.length - a.length);
+            this.extractedName = validNameCandidates[0].trim();
+          } else if (!this.extractedName && nameCandidates.length > 0) {
+            nameCandidates.sort((a, b) => b.length - a.length);
+            this.extractedName = nameCandidates[0].trim();
+          }
         }
       }
 
@@ -834,9 +844,12 @@ export class AyushmanParser extends BaseParser {
       // Auto-detect State based on context if blank
       if (!this.extractedState) {
         const textLower = this.rawText.toLowerCase();
-        if (textLower.includes('gujarat') || /[\u0A80-\u0AFF]/.test(this.rawText) || (this.extractedDistrict && this.extractedDistrict.toUpperCase() === 'SURAT')) {
+        const distUpper = (this.extractedDistrict || '').toUpperCase();
+        const maharashtraDistricts = ['JALGAON', 'MUMBAI', 'PUNE', 'NAGPUR', 'NASHIK', 'THANE', 'AURANGABAD', 'SOLAPUR', 'KOLHAPUR', 'SANGLI', 'SATARA', 'AMRAVATI', 'AKOLA', 'NANDED', 'LATUR', 'DHULE', 'CHANDRAPUR', 'BULDHANA', 'PARBHANI', 'BEED', 'YAVATMAL', 'RATNAGIRI', 'PALGHAR', 'RAIGAD', 'WARDHA', 'GONDIA', 'HINGOLI', 'WASHIM', 'GADCHIROLI', 'OSMANABAD', 'SINDHUDURG'];
+        
+        if (textLower.includes('gujarat') || /[\u0A80-\u0AFF]/.test(this.rawText) || distUpper === 'SURAT') {
           this.extractedState = 'Gujarat';
-        } else if (textLower.includes('maharashtra') || textLower.includes('mumbai') || textLower.includes('pune')) {
+        } else if (textLower.includes('maharashtra') || textLower.includes('mjpjay') || textLower.includes('mumbai') || textLower.includes('pune') || maharashtraDistricts.includes(distUpper)) {
           this.extractedState = 'Maharashtra';
         } else if (textLower.includes('uttar pradesh') || textLower.includes('jaunpur') || textLower.includes('lucknow')) {
           this.extractedState = 'Uttar Pradesh';

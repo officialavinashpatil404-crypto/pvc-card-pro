@@ -5,10 +5,14 @@ import * as path from 'path';
 // Programmatically sync and copy the correct blank template PNGs from the brain directory
 const frontPath = path.resolve('./public/templates/aadhaar/aadhaar-front.png.png');
 const backPath  = path.resolve('./public/templates/aadhaar/aadhaar-back.png.png');
+const baalFrontPath = path.resolve('./public/templates/aadhaar/baal-front.png');
+const baalBackPath  = path.resolve('./public/templates/aadhaar/baal-back.png');
 
 if (process.env.NODE_ENV !== 'production') {
   const brainFrontSource = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\9bafbd7f-728b-4c66-8255-f18a816f4f7b\\media__1784014822212.png";
   const brainBackSource  = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\9bafbd7f-728b-4c66-8255-f18a816f4f7b\\media__1784014822149.png";
+  const brainBaalFront   = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\fe6df8c6-b747-41d4-8539-50cdef9a9a3a\\media__1784877018603.png";
+  const brainBaalBack    = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\fe6df8c6-b747-41d4-8539-50cdef9a9a3a\\media__1784877018766.png";
 
   try {
     const destDir = path.dirname(frontPath);
@@ -16,12 +20,10 @@ if (process.env.NODE_ENV !== 'production') {
       fs.mkdirSync(destDir, { recursive: true });
     }
 
-    if (fs.existsSync(brainFrontSource)) {
-      fs.copyFileSync(brainFrontSource, frontPath);
-    }
-    if (fs.existsSync(brainBackSource)) {
-      fs.copyFileSync(brainBackSource, backPath);
-    }
+    if (fs.existsSync(brainFrontSource)) fs.copyFileSync(brainFrontSource, frontPath);
+    if (fs.existsSync(brainBackSource))  fs.copyFileSync(brainBackSource, backPath);
+    if (fs.existsSync(brainBaalFront))   fs.copyFileSync(brainBaalFront, baalFrontPath);
+    if (fs.existsSync(brainBaalBack))    fs.copyFileSync(brainBaalBack, baalBackPath);
   } catch (copyErr: any) {
     // Ignore in dev
   }
@@ -29,14 +31,19 @@ if (process.env.NODE_ENV !== 'production') {
 
 let TEMPLATE_FRONT_BASE64 = '';
 let TEMPLATE_BACK_BASE64  = '';
+let BAAL_TEMPLATE_FRONT_BASE64 = '';
+let BAAL_TEMPLATE_BACK_BASE64  = '';
 
 try {
   if (fs.existsSync(frontPath) && fs.existsSync(backPath)) {
     TEMPLATE_FRONT_BASE64 = `data:image/png;base64,${fs.readFileSync(frontPath).toString('base64')}`;
     TEMPLATE_BACK_BASE64  = `data:image/png;base64,${fs.readFileSync(backPath).toString('base64')}`;
     console.log('AADHAAR_TEMPLATES_LOADED');
-  } else {
-    console.warn('[BrowserSingleton] Aadhaar blank templates not found');
+  }
+  if (fs.existsSync(baalFrontPath) && fs.existsSync(baalBackPath)) {
+    BAAL_TEMPLATE_FRONT_BASE64 = `data:image/png;base64,${fs.readFileSync(baalFrontPath).toString('base64')}`;
+    BAAL_TEMPLATE_BACK_BASE64  = `data:image/png;base64,${fs.readFileSync(baalBackPath).toString('base64')}`;
+    console.log('BAAL_AADHAAR_TEMPLATES_LOADED');
   }
 } catch (err: any) {
   console.error('[BrowserSingleton] Failed to load Aadhaar templates:', err.message);
@@ -270,6 +277,10 @@ if (!globalForPool._browserPool) {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  // Eagerly download PDF.js and jsQR to local disk so card parsers never
+  // depend on CDN availability (which causes 30s timeouts).
+  initAssets().catch(e => console.warn('[BrowserSingleton] Asset pre-download failed (will use CDN fallback):', e?.message));
 }
 
 const pool = globalForPool._browserPool;
@@ -333,6 +344,30 @@ export function getLocalScripts() {
 // Browser pool is lazily initialized inside acquireBrowser()
 
 async function createBrowserInstance(): Promise<Browser> {
+  // Performance flags common to all environments
+  const PERF_ARGS = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-extensions',
+    '--disable-default-apps',
+    '--disable-translate',
+    '--disable-sync',
+    '--disable-background-networking',
+    '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-ipc-flooding-protection',
+    '--hide-scrollbars',
+    '--mute-audio',
+    '--no-first-run',
+    '--disable-client-side-phishing-detection',
+    '--disable-component-update',
+    '--font-render-hinting=none',
+  ];
+
   if (process.env.VERCEL) {
     console.log('[BrowserSingleton] Launching isolated Chromium instance for Vercel Serverless request...');
     const chromiumMod = await import('@sparticuz/chromium');
@@ -353,7 +388,7 @@ async function createBrowserInstance(): Promise<Browser> {
 
     const launchFn = puppeteerCore.launch || (puppeteerCoreMod as any).launch;
     return await launchFn({
-      args: [...(chromium.args || []), '--no-sandbox', '--disable-setuid-sandbox'],
+      args: [...(chromium.args || []), ...PERF_ARGS],
       defaultViewport: chromium.defaultViewport,
       executablePath: executablePath,
       headless: chromium.headless ?? true,
@@ -365,7 +400,7 @@ async function createBrowserInstance(): Promise<Browser> {
   const launchFn = puppeteer.launch || (puppeteerMod as any).launch;
   return await launchFn({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: PERF_ARGS,
   });
 }
 
@@ -376,5 +411,5 @@ export async function getBrowser(): Promise<Browser> {
   return pool.acquireBrowser();
 }
 
-export { TEMPLATE_FRONT_BASE64, TEMPLATE_BACK_BASE64 };
+export { TEMPLATE_FRONT_BASE64, TEMPLATE_BACK_BASE64, BAAL_TEMPLATE_FRONT_BASE64, BAAL_TEMPLATE_BACK_BASE64 };
 

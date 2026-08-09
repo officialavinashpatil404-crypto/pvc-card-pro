@@ -262,117 +262,34 @@ export async function translateOrRepairWithAI(
 ): Promise<{ localName: string; localAddress: string; tokensUsed?: { input: number; output: number; total: number; } }> {
   const targetLang = (lang || 'gujarati').toLowerCase();
 
-  // If no key is provided, try offline dictionary fallback for Gujarati, else return raw fields
   if (!geminiApiKey) {
     if (targetLang === 'gujarati') {
+      const { repairGujaratiText } = require('./gujaratiRepair');
       return {
-        localName: translateOrRepairAddress(fields.nameEnglish, fields.localName),
-        localAddress: translateOrRepairAddress(fields.addressEnglish, fields.localAddress)
+        localName: repairGujaratiText(fields.localName || transliterateWord(fields.nameEnglish)),
+        localAddress: repairGujaratiText(fields.localAddress || translateOrRepairAddress(fields.addressEnglish, fields.localAddress))
       };
     }
-    // Return raw fields so route.ts can run other local engines
     return {
       localName: fields.localName,
       localAddress: fields.localAddress
     };
   }
 
-  // 1. Try to translate/repair offline using our Self-Learning database first
-  try {
-    const offlineResult = translateOfflineWithLearning(targetLang, fields.nameEnglish, fields.addressEnglish);
-    if (offlineResult.localName && offlineResult.localAddress) {
-      console.log(`[TranslationEngine] Bypass AI: Successfully resolved name and address offline using learned mappings. Cost: ₹0.`);
-      return {
-        localName: offlineResult.localName,
-        localAddress: offlineResult.localAddress
-      };
-    }
-  } catch (e) {
-    console.error('[TranslationEngine] Self-Learning Engine offline translation failed:', e);
-  }
-
-  // 1.5 Try to translate/repair using the shared translation_cache database table
-  let cachedName: string | null = null;
-  let cachedAddress: string | null = null;
-  try {
-    const supabase = await createClient();
-    const cleanNameKey = fields.nameEnglish.trim().toLowerCase();
-    const cleanAddrKey = fields.addressEnglish.trim().toLowerCase();
-
-    // ─── Self-Healing: Purge contaminated cache entries if queried ───
-    const contaminatedKeys = ['sonar bhikha raghunath', 'laxmiben', 'avinash naval patil', 'shahin parvin sayyad vasim ali'];
-    if (contaminatedKeys.includes(cleanNameKey)) {
-      console.log(`[TranslationEngine] Self-Healing: Purging contaminated key "${cleanNameKey}" from Supabase...`);
-      await supabase.from('translation_cache').delete().eq('english_text', cleanNameKey);
-    }
-    if (contaminatedKeys.includes(cleanAddrKey)) {
-      console.log(`[TranslationEngine] Self-Healing: Purging contaminated key "${cleanAddrKey}" from Supabase...`);
-      await supabase.from('translation_cache').delete().eq('english_text', cleanAddrKey);
-    }
-
-    const { data: cacheData, error: cacheErr } = await supabase
-      .from('translation_cache')
-      .select('english_text, local_text')
-      .in('english_text', [cleanNameKey, cleanAddrKey])
-      .eq('language', targetLang);
-
-    if (!cacheErr && cacheData) {
-      cachedName = cacheData.find(d => d.english_text === cleanNameKey)?.local_text || null;
-      cachedAddress = cacheData.find(d => d.english_text === cleanAddrKey)?.local_text || null;
-
-      // ─── Self-Healing: Purge contaminated cache entries if they have word count mismatch or address subset match ───
-      if (cachedName) {
-        const engWords = cleanNameKey.split(/\s+/).filter(w => w.length > 0);
-        const locWords = cachedName.split(/\s+/).filter(w => w.length > 0);
-        const cleanLocAddr = (fields.localAddress || '').toLowerCase();
-        const cleanEngAddr = (fields.addressEnglish || '').toLowerCase();
-        const isWordInAddress = cleanLocAddr.includes(cachedName.toLowerCase()) || cleanEngAddr.includes(cleanNameKey);
-        
-        if (locWords.length < engWords.length && (isWordInAddress || engWords.length >= 3)) {
-          console.log(`[TranslationEngine] Self-Healing: Detected suspicious cached name "${cachedName}" for English "${cleanNameKey}" (possible mix-up with address name). Purging from cache.`);
-          await supabase.from('translation_cache').delete().eq('english_text', cleanNameKey);
-          cachedName = null;
-        }
-      }
-
-      if (cachedName && cachedAddress) {
-        console.log(`[TranslationEngine] Bypass AI: Found exact translation matches in shared Supabase cache. Cost: ₹0.`);
-        return {
-          localName: cachedName,
-          localAddress: cachedAddress
-        };
-      }
-    }
-  } catch (dbCacheErr: any) {
-    console.warn('[TranslationEngine] Supabase cache lookup failed (table may not be created yet):', dbCacheErr.message);
-  }
-
-  // 2. If not fully resolved, call Gemini AI with compressed prompt
-  const errorCheck = detectLocalTextErrors(fields, targetLang);
-
-  // We are removing the aggressive bypass because PDF extraction frequently drops vowel signs (matras, short-i, repha),
-  // which regex heuristics cannot easily detect. Since the token cost is now very low (~300 tokens), 
-  // we can safely rely on Gemini to perfectly restore the text every time if it's not cached.
-  /*
-  if (!errorCheck.needsRepair && fields.localName && fields.localAddress) {
-    console.log(`[TranslationEngine] Bypass AI: Local text is clean and needs no repair for ${targetLang}. Cost: ₹0.`);
-    return {
-      localName: fields.localName,
-      localAddress: fields.localAddress
-    };
-  }
-  */
-
-  console.log(`[TranslationEngine] Triggering Gemini AI Repair for ${targetLang}. Status check: ${errorCheck.reason || 'Aggressive bypass removed'}`);
+  console.log(`[TranslationEngine] Executing Precision Indic Text Repair for ${targetLang}`);
 
   try {
     const genAI = new GoogleGenerativeAI(geminiApiKey);
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0,
+        topP: 1,
+        topK: 1
+      }
     });
 
-    // Resolve target language display name
     const langDisplayNames: Record<string, string> = {
       'gujarati': 'Gujarati (ગુજરાતી)',
       'hindi': 'Hindi (हिंदी)',
@@ -383,26 +300,57 @@ export async function translateOrRepairWithAI(
       'malayalam': 'Malayalam (മലയാളം)',
       'bengali': 'Bengali (বাংলা)',
       'punjabi': 'Punjabi (ਪੰਜਾਬੀ)',
-      'odia': 'Odia (ଓଡ଼િଆ)',
+      'odia': 'Odia (ଓડ଼ିଆ)',
       'assamese': 'Assamese (অસમીયા)',
       'urdu': 'Urdu (اردو)'
     };
     const langName = langDisplayNames[targetLang] || targetLang;
 
-    // Optimized compressed prompt saves ~250 input tokens per call
-    const aiPrompt = `Translate to ${langName} script. Return ONLY JSON: {"localName": "...", "localAddress": "..."}
-Name (EN): "${fields.nameEnglish}"
-Address (EN): "${fields.addressEnglish}"
-Hint Name: "${fields.localName}"
-Hint Address: "${fields.localAddress}"
-Rules:
-1. Translate address terms (Road/Near/Opp).
-2. Transliterate unique names phonetically.
-3. Fix matras/spacing in hints. Keep numbers/pin codes.
-4. CRITICAL: The "localName" MUST be the translation of "Name (EN)" ONLY. Do NOT substitute it or mix it with any names mentioned in "Address (EN)" or "Hint Address" (such as Care of / S/O / W/O / D/O parent or spouse names).
-5. Vowel Sign (Matra, Ukar, Vilanti) Restoration: Original PDF text extraction often drops vowel signs (short-i, e-matras, ukar, vilanti). You MUST cross-reference the English phonetics of "Name (EN)" and "Address (EN)" to detect and restore these missing vowel signs in your final JSON output (e.g. Avinash -> "અવિનાશ" / "अविनाश", Ketan -> "કેતન" / "केतन", Nilesh -> "નિલેશ" / "निलेश").`;
+    const aiPrompt = `You are an expert Indic text repair & transliteration engine for ${langName} script.
+Your job is to produce 100% accurate, properly-spaced, correctly-spelled local language text.
 
-    const response = await model.generateContent([aiPrompt]);
+INPUT DATA:
+- Name (EN): "${fields.nameEnglish}"
+- Address (EN): "${fields.addressEnglish}"
+- Raw Local Name (extracted from document): "${fields.localName}"
+- Raw Local Address (extracted from document): "${fields.localAddress}"
+
+STRICT RULES:
+1. WORD SPACING (CRITICAL): PDF text extraction often merges adjacent words together without spaces. You MUST insert proper spaces between words in Raw Local Name and Raw Local Address based on English word boundaries.
+   Examples:
+   - "અવિનાશનવલ પાટીલ" -> "અવિનાશ નવલ પાટીલ" (insert space between Avinash and Naval)
+   - "રામીપાકપાસે" -> "રામી પાર્ક પાસે" (insert spaces between Rami, Park, and Pasa)
+   - "સુરતસીટી" -> "સુરત સિટી" (insert space between Surat and City)
+
+2. SPELLING & MATRA CORRECTION (CRITICAL): Document text extraction frequently corrupts Indic spelling, drops matras (short-i િ vs long-i ી, anusvara ં), or breaks conjunct consonants. Cross-reference Name (EN) and Address (EN) with the Raw Local fields to repair dropped matras while ALWAYS PRESERVING the exact authentic spelling from the original PDF.
+   Examples:
+   - English Name: "Ninave Bhagawati Chandrashekhar" + PDF Local (missing matra): "નનાવે ભગવતી ચંદ્રશેખર" -> Corrected: "નિનાવે ભગવતી ચંદ્રશેખર"
+   - English Address: "Dindoli" + PDF Local (missing matra & anusvara): "ડડોલી" -> Corrected: "ડીંડોલી"
+   - English Name: "Siddhi Ravsaheb Patil" + PDF Local: "સિધ્ધી રાવસાહેબ પાટીલ" -> Preserve exact PDF spelling: "સિધ્ધી રાવસાહેબ પાટીલ" (DO NOT change "સિધ્ધી" to "સિદ્ધિ")
+   - English Name: "Laxmiben" + Corrupted Local: "લમીબેન" -> Corrected: "લક્ષ્મીબેન"
+   - "ગોવધનનગર" -> "ગોવર્ધન નગર"
+   - "શીવાલક્સક્વેર" -> "શિવાલિક સ્ક્વેર"
+
+3. WORD FIDELITY & LOANWORDS:
+   - PRESERVE the exact authentic local words, place names, and character choices from the original PDF document. DO NOT alter valid original spellings (e.g. keep "સિધ્ધી", do not change to "સિદ્ધિ"; keep "સ્ક્વેર", DO NOT change to "ચોક"; keep "રોડ", DO NOT change to "માર્ગ").
+   - Fix missing matras and dropped conjuncts so the local text phonetically and visually matches the original PDF name/address.
+   - Keep relationship markers like "S/O", "W/O", "D/O", "C/O" or local prefixes ("આત્મજ:", "પત્ની:", "પુત્રી:", "કેર ઓફ:", "द्वारा:") consistent.
+
+4. IF MISSING:
+   - If Raw Local Name is completely empty, transliterate Name (EN) phonetically to ${langName}.
+   - If Raw Local Address is completely empty, translate Address (EN) to ${langName}.
+
+Return ONLY valid JSON: {"localName": "...", "localAddress": "..."}`;
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Gemini API timeout after 15000ms')), 15000)
+    );
+
+    const response = await Promise.race([
+      model.generateContent([aiPrompt]),
+      timeoutPromise
+    ]) as any;
+
     const text = response.response.text();
     const parsed = JSON.parse(text.trim());
     
@@ -424,24 +372,19 @@ Rules:
     // Save to shared database cache
     try {
       const supabase = await createClient();
-      const insertData = [];
-      if (!cachedName) {
-        insertData.push({
+      const insertData = [
+        {
           english_text: fields.nameEnglish.trim().toLowerCase(),
           local_text: finalLocalName,
           language: targetLang
-        });
-      }
-      if (!cachedAddress) {
-        insertData.push({
+        },
+        {
           english_text: fields.addressEnglish.trim().toLowerCase(),
           local_text: finalLocalAddress,
           language: targetLang
-        });
-      }
-      if (insertData.length > 0) {
-        await supabase.from('translation_cache').upsert(insertData, { onConflict: 'english_text,language' });
-      }
+        }
+      ];
+      await supabase.from('translation_cache').upsert(insertData, { onConflict: 'english_text,language' });
     } catch (saveCacheErr: any) {
       console.warn('[TranslationEngine] Failed to save translations to shared cache:', saveCacheErr.message);
     }

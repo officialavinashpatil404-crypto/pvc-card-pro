@@ -20,6 +20,7 @@ export default async function AdminDashboard() {
     { count: cardsToday },
     { count: cardsThisMonth },
     { data: tokenLogs },
+    { data: allUsersData },
     { data: paidUsers },
     { data: activeBanner },
     { data: recentCards }
@@ -29,11 +30,19 @@ export default async function AdminDashboard() {
     supabase.from('card_history').select('*', { count: 'exact', head: true }),
     supabase.from('card_history').select('*', { count: 'exact', head: true }).gte('created_at', todayStart),
     supabase.from('card_history').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
-    supabase.from('gemini_token_usage').select('input_tokens, output_tokens, total_tokens, created_at, document_type').order('created_at', { ascending: false }),
+    supabase.from('gemini_token_usage').select('id, user_id, input_tokens, output_tokens, total_tokens, created_at, document_type').order('created_at', { ascending: false }),
+    supabase.from('users').select('id, email, name'),
     supabase.from('users').select('id, name, email, plan, remaining_cards, plan_expiry').neq('plan', 'Free').order('created_at', { ascending: false }),
     supabase.from('banners').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('card_history').select('id, user_id, document_type, status, created_at').order('created_at', { ascending: false }).limit(6)
   ]);
+
+  const userMap: Record<string, { email: string; name: string }> = {};
+  if (allUsersData) {
+    for (const u of allUsersData) {
+      userMap[u.id] = { email: u.email, name: u.name };
+    }
+  }
 
   const totalRevenue = revenueData?.reduce((acc, curr) => acc + Number(curr.amount), 0) || 0;
 
@@ -141,11 +150,14 @@ export default async function AdminDashboard() {
       </div>
 
       {/* Gemini AI Token Billing Section */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-6">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-purple-600 text-2xl">auto_awesome</span>
-            <h2 className="text-lg font-bold text-slate-900">Gemini AI Token & API Cost Monitor</h2>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Gemini AI Token & API Cost Monitor</h2>
+              <p className="text-xs text-slate-500">Real-time aggregate token usage and estimated API cost tracking.</p>
+            </div>
           </div>
           <span className="text-xs text-slate-500 font-medium bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
             Model: Gemini Flash / Pro
@@ -175,6 +187,76 @@ export default async function AdminDashboard() {
             <p className="text-xs text-emerald-600 font-semibold mt-1">
               Total Cost: ₹{((totalTokens / 1000000) * 0.3 * 85).toFixed(2)}
             </p>
+          </div>
+        </div>
+
+        {/* Single Card Itemized AI Token & Cost Breakdown Table */}
+        <div className="border-t border-slate-100 pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-purple-600 text-xl">receipt_long</span>
+              <h3 className="text-sm font-bold text-slate-900">Per Card Single Entry AI Token & Cost Log (Itemized Breakdown)</h3>
+            </div>
+            <span className="text-xs font-bold bg-purple-50 text-purple-700 px-2.5 py-0.5 rounded-full border border-purple-200">
+              {tokenLogs?.length || 0} Recent Entries
+            </span>
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-slate-200/80">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
+                  <th className="py-2.5 px-3">Date & Time</th>
+                  <th className="py-2.5 px-3">User Email</th>
+                  <th className="py-2.5 px-3">Doc Type</th>
+                  <th className="py-2.5 px-3 text-right">Input Tokens</th>
+                  <th className="py-2.5 px-3 text-right">Output Tokens</th>
+                  <th className="py-2.5 px-3 text-right">Total Tokens</th>
+                  <th className="py-2.5 px-3 text-right">Est. Cost (₹)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {tokenLogs && tokenLogs.length > 0 ? (
+                  tokenLogs.slice(0, 15).map((log: any, idx: number) => {
+                    const cost = ((Number(log.total_tokens || 0) / 1000000) * 0.3 * 85).toFixed(4);
+                    const userEmail = userMap[log.user_id]?.email || log.user_id?.substring(0, 8) || 'System Admin';
+                    return (
+                      <tr key={log.id || idx} className="hover:bg-purple-50/40 transition-colors">
+                        <td className="py-2.5 px-3 font-mono text-slate-600">
+                          {new Date(log.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}
+                        </td>
+                        <td className="py-2.5 px-3 font-medium text-slate-800">
+                          {userEmail}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-800 border border-slate-200">
+                            {log.document_type || 'CARD'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                          {Number(log.input_tokens || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                          {Number(log.output_tokens || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-purple-700">
+                          {Number(log.total_tokens || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-extrabold text-emerald-600">
+                          ₹{cost}
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-slate-400 text-xs">
+                      No single-card AI token entries logged yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

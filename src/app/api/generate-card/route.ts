@@ -43,28 +43,53 @@ function cachedFontBase64(fontPath: string): string {
 
 
 function detectLanguage(text: string) {
-  if (!text) return { lang: 'gujarati', fontId: 'NotoSansGujarati', fontFamily: 'NotoSansGujarati' };
-  if (/[\u0A80-\u0AFF]/.test(text)) return { lang: 'gujarati', fontId: 'NotoSansGujarati', fontFamily: 'NotoSansGujarati' };
-  if (/[\u0B80-\u0BFF]/.test(text)) return { lang: 'tamil', fontId: 'NotoSansTamil', fontFamily: 'NotoSansTamil' };
-  if (/[\u0C00-\u0C7F]/.test(text)) return { lang: 'telugu', fontId: 'NotoSansTelugu', fontFamily: 'NotoSansTelugu' };
-  if (/[\u0C80-\u0CFF]/.test(text)) return { lang: 'kannada', fontId: 'NotoSansKannada', fontFamily: 'NotoSansKannada' };
-  if (/[\u0D00-\u0D7F]/.test(text)) return { lang: 'malayalam', fontId: 'NotoSansMalayalam', fontFamily: 'NotoSansMalayalam' };
+  if (!text) return { lang: 'english', fontId: 'NotoSansGujarati', fontFamily: 'NotoSansGujarati' };
 
-  if (/[\u0980-\u09FF]/.test(text)) {
+  const counts: Record<string, number> = {
+    gujarati: (text.match(/[\u0A80-\u0AFF]/g) || []).length,
+    tamil: (text.match(/[\u0B80-\u0BFF]/g) || []).length,
+    telugu: (text.match(/[\u0C00-\u0C7F]/g) || []).length,
+    kannada: (text.match(/[\u0C80-\u0CFF]/g) || []).length,
+    malayalam: (text.match(/[\u0D00-\u0D7F]/g) || []).length,
+    bengali: (text.match(/[\u0980-\u09FF]/g) || []).length,
+    punjabi: (text.match(/[\u0A00-\u0A7F]/g) || []).length,
+    odia: (text.match(/[\u0B00-\u0B7F]/g) || []).length,
+    devanagari: (text.match(/[\u0900-\u097F]/g) || []).length,
+    urdu: (text.match(/[\u0600-\u06FF]/g) || []).length,
+  };
+
+  let maxLang = 'english';
+  let maxCount = 0;
+
+  for (const [lang, count] of Object.entries(counts)) {
+    if (count > maxCount) {
+      maxCount = count;
+      maxLang = lang;
+    }
+  }
+
+  if (maxCount === 0) {
+    return { lang: 'english', fontId: 'NotoSansGujarati', fontFamily: 'NotoSansGujarati' };
+  }
+
+  if (maxLang === 'gujarati') return { lang: 'gujarati', fontId: 'NotoSansGujarati', fontFamily: 'NotoSansGujarati' };
+  if (maxLang === 'tamil') return { lang: 'tamil', fontId: 'NotoSansTamil', fontFamily: 'NotoSansTamil' };
+  if (maxLang === 'telugu') return { lang: 'telugu', fontId: 'NotoSansTelugu', fontFamily: 'NotoSansTelugu' };
+  if (maxLang === 'kannada') return { lang: 'kannada', fontId: 'NotoSansKannada', fontFamily: 'NotoSansKannada' };
+  if (maxLang === 'malayalam') return { lang: 'malayalam', fontId: 'NotoSansMalayalam', fontFamily: 'NotoSansMalayalam' };
+  if (maxLang === 'bengali') {
     if (/[\u09F0\u09F1]/.test(text)) return { lang: 'assamese', fontId: 'NotoSansBengali', fontFamily: 'NotoSansBengali' };
     return { lang: 'bengali', fontId: 'NotoSansBengali', fontFamily: 'NotoSansBengali' };
   }
-
-  if (/[\u0A00-\u0A7F]/.test(text)) return { lang: 'punjabi', fontId: 'NotoSansGurmukhi', fontFamily: 'NotoSansGurmukhi' };
-  if (/[\u0B00-\u0B7F]/.test(text)) return { lang: 'odia', fontId: 'NotoSansOriya', fontFamily: 'NotoSansOriya' };
-
-  if (/[\u0900-\u097F]/.test(text)) {
-    if (/[\u0933]/.test(text)) return { lang: 'marathi', fontId: 'NotoSansDevanagari', fontFamily: 'NotoSansDevanagari' };
+  if (maxLang === 'punjabi') return { lang: 'punjabi', fontId: 'NotoSansGurmukhi', fontFamily: 'NotoSansGurmukhi' };
+  if (maxLang === 'odia') return { lang: 'odia', fontId: 'NotoSansOriya', fontFamily: 'NotoSansOriya' };
+  if (maxLang === 'devanagari') {
+    if (/[\u0933]/.test(text) || /ऑळख|माझा|माझी|पडताळणी|महाराष्ट्र|माझ्या/i.test(text)) {
+      return { lang: 'marathi', fontId: 'NotoSansDevanagari', fontFamily: 'NotoSansDevanagari' };
+    }
     return { lang: 'hindi', fontId: 'NotoSansDevanagari', fontFamily: 'NotoSansDevanagari' };
   }
-
-  if (/[\u0600-\u06FF]/.test(text)) return { lang: 'urdu', fontId: 'NotoNastaliqUrdu', fontFamily: 'NotoNastaliqUrdu' };
-  if (/[\uABC0-\uABFF\uAAE0-\uAAFF]/.test(text)) return { lang: 'manipuri', fontId: 'NotoSansMeeteiMayek', fontFamily: 'NotoSansMeeteiMayek' };
+  if (maxLang === 'urdu') return { lang: 'urdu', fontId: 'NotoNastaliqUrdu', fontFamily: 'NotoNastaliqUrdu' };
 
   return { lang: 'english', fontId: 'NotoSansGujarati', fontFamily: 'NotoSansGujarati' };
 }
@@ -74,20 +99,20 @@ function getCorrectGenderLine(genderLine: string, gender: string, lang: string):
   const langLower = (lang || '').toLowerCase();
 
   const mapping: Record<string, { male: string; female: string; trans: string }> = {
-    gujarati:  { male: '\u0aaa\u0ac1\u0ab0\u0ac1\u0ab7 / MALE', female: '\u0ab8\u0acd\u0aa4\u0acd\u0ab0\u0ac0 / FEMALE', trans: '\u0aa4\u0acd\u0ab0\u0ac0\u0a9c\u0ac0 \u0a9c\u0abe\u0aa4\u0ac0 / TRANSGENDER' },
-    hindi:     { male: '\u092a\u0941\u0930\u0941\u0937 / MALE', female: '\u092e\u0939\u093f\u0932\u093e / FEMALE', trans: '\u0915\u093f\u0928\u094d\u0928\u0930 / TRANSGENDER' },
-    marathi:   { male: '\u092a\u0941\u0930\u0941\u0937 / MALE', female: '\u092e\u0939\u093f\u0932\u093e / FEMALE', trans: '\u0924\u0943\u0924\u0940\u092f\u092a\u0902\u0925\u0940 / TRANSGENDER' },
-    devanagari:{ male: '\u092a\u0941\u0930\u0941\u0937 / MALE', female: '\u092e\u0939\u093f\u0932\u093e / FEMALE', trans: '\u0915\u093f\u0928\u094d\u0928\u0930 / TRANSGENDER' },
-    tamil:     { male: '\u0b85\u0b91\u0ba3\u0bcd / MALE', female: '\u0baa\u0bc6\u0ba3\u0bcd / FEMALE', trans: '\u0ba4\u0bbf\u0bb0\u0bc1\u0ba8\u0b99\u0bcd\u0b95\u0bc5 / TRANSGENDER' },
-    telugu:    { male: '\u0c2a\u0c41\u0c30\u0c41\u0c37\u0c41\u0c21\u0c41 / MALE', female: '\u0c38\u0c4d\u0c24\u0c4d\u0c30\u0c40 / FEMALE', trans: '\u0c28\u0c2a\u0c41\u0c02\u0c38\u0c15\u0c41\u0c21\u0c41 / TRANSGENDER' },
-    kannada:   { male: '\u0caa\u0cc1\u0ca0\u0cc1\u0cb7 / MALE', female: '\u0cae\u0cb9\u0cbf\u0cb3\u0cc6 / FEMALE', trans: '\u0ca4\u0cc3\u0ca4\u0cc0\u0caf \u0cb2\u0cbf\u0c82\u0c97 / TRANSGENDER' },
+    gujarati: { male: '\u0aaa\u0ac1\u0ab0\u0ac1\u0ab7 / MALE', female: '\u0ab8\u0acd\u0aa4\u0acd\u0ab0\u0ac0 / FEMALE', trans: '\u0aa4\u0acd\u0ab0\u0ac0\u0a9c\u0ac0 \u0a9c\u0abe\u0aa4\u0ac0 / TRANSGENDER' },
+    hindi: { male: '\u092a\u0941\u0930\u0941\u0937 / MALE', female: '\u092e\u0939\u093f\u0932\u093e / FEMALE', trans: '\u0915\u093f\u0928\u094d\u0928\u0930 / TRANSGENDER' },
+    marathi: { male: '\u092a\u0941\u0930\u0941\u0937 / MALE', female: '\u092e\u0939\u093f\u0932\u093e / FEMALE', trans: '\u0924\u0943\u0924\u0940\u092f\u092a\u0902\u0925\u0940 / TRANSGENDER' },
+    devanagari: { male: '\u092a\u0941\u0930\u0941\u0937 / MALE', female: '\u092e\u0939\u093f\u0932\u093e / FEMALE', trans: '\u0915\u093f\u0928\u094d\u0928\u0930 / TRANSGENDER' },
+    tamil: { male: '\u0b85\u0b91\u0ba3\u0bcd / MALE', female: '\u0baa\u0bc6\u0ba3\u0bcd / FEMALE', trans: '\u0ba4\u0bbf\u0bb0\u0bc1\u0ba8\u0b99\u0bcd\u0b95\u0bc5 / TRANSGENDER' },
+    telugu: { male: '\u0c2a\u0c41\u0c30\u0c41\u0c37\u0c41\u0c21\u0c41 / MALE', female: '\u0c38\u0c4d\u0c24\u0c4d\u0c30\u0c40 / FEMALE', trans: '\u0c28\u0c2a\u0c41\u0c02\u0c38\u0c15\u0c41\u0c21\u0c41 / TRANSGENDER' },
+    kannada: { male: '\u0caa\u0cc1\u0ca0\u0cc1\u0cb7 / MALE', female: '\u0cae\u0cb9\u0cbf\u0cb3\u0cc6 / FEMALE', trans: '\u0ca4\u0cc3\u0ca4\u0cc0\u0caf \u0cb2\u0cbf\u0c82\u0c97 / TRANSGENDER' },
     malayalam: { male: '\u0d2a\u0d41\u0d30\u0d41\u0d37\u0d7a / MALE', female: '\u0d38\u0d4d\u0d24\u0d4d\u0d30\u0d40 / FEMALE', trans: '\u0d2d\u0d3f\u0d28\u0d4d\u0d28\u0d32\u0d3f\u0d02\u0d17\u0d15\u0d3e\u0d30\u0d7a / TRANSGENDER' },
-    bengali:   { male: '\u09aa\u09c1\u09b0\u09c1\u09b7 / MALE', female: '\u09ae\u09b9\u09bf\u09b2\u093e / FEMALE', trans: '\u09a4\u09c3\u09a4\u09c0\u09df \u09b2\u09bf\u0999\u0acd\u0997 / TRANSGENDER' },
-    assamese:  { male: '\u09aa\u09c1\u09b0\u09c1\u09b7 / MALE', female: '\u09ae\u09b9\u09bf\u09b2\u093e / FEMALE', trans: '\u09a4\u09c3\u09a4\u09c0\u09df \u09b2\u09bf\u0999\u0acd\u0997 / TRANSGENDER' },
-    punjabi:   { male: '\u0a2a\u0a4d\u0a30\u0a41\u0a38\u0a3c / MALE', female: '\u0a2e\u0a39\u0a3f\u0a32\u0a3e / FEMALE', trans: '\u0a24\u0a40\u0a1c\u0a3e \u0a32\u0a3f\u0a70\u0a17 / TRANSGENDER' },
-    odia:      { male: '\u0b2a\u0b41\u0b24\u0b4d\u0b30 / MALE', female: '\u0b2e\u0b39\u0b3f\u0b33\u0b3e / FEMALE', trans: '\u0b24\u0b43\u0b24\u0b40\u0b5f \u0b32\u0b3f\u0b19\u0b4d\u0b17 / TRANSGENDER' },
-    urdu:      { male: '\u0645\u0631\u062f / MALE', female: '\u0639\u0648\u0631\u062a / FEMALE', trans: '\u062e\u0648\u0627\u062c\u0639 \u0633\u0631\u0627 / TRANSGENDER' },
-    english:   { male: 'MALE', female: 'FEMALE', trans: 'TRANSGENDER' }
+    bengali: { male: '\u09aa\u09c1\u09b0\u09c1\u09b7 / MALE', female: '\u09ae\u09b9\u09bf\u09b2\u093e / FEMALE', trans: '\u09a4\u09c3\u09a4\u09c0\u09df \u09b2\u09bf\u0999\u0acd\u0997 / TRANSGENDER' },
+    assamese: { male: '\u09aa\u09c1\u09b0\u09c1\u09b7 / MALE', female: '\u09ae\u09b9\u09bf\u09b2\u093e / FEMALE', trans: '\u09a4\u09c3\u09a4\u09c0\u09df \u09b2\u09bf\u0999\u0acd\u0997 / TRANSGENDER' },
+    punjabi: { male: '\u0a2a\u0a4d\u0a30\u0a41\u0a38\u0a3c / MALE', female: '\u0a2e\u0a39\u0a3f\u0a32\u0a3e / FEMALE', trans: '\u0a24\u0a40\u0a1c\u0a3e \u0a32\u0a3f\u0a70\u0a17 / TRANSGENDER' },
+    odia: { male: '\u0b2a\u0b41\u0b24\u0b4d\u0b30 / MALE', female: '\u0b2e\u0b39\u0b3f\u0b33\u0b3e / FEMALE', trans: '\u0b24\u0b43\u0b24\u0b40\u0b5f \u0b32\u0b3f\u0b19\u0b4d\u0b17 / TRANSGENDER' },
+    urdu: { male: '\u0645\u0631\u062f / MALE', female: '\u0639\u0648\u0631\u062a / FEMALE', trans: '\u062e\u0648\u0627\u062c\u0639 \u0633\u0631\u0627 / TRANSGENDER' },
+    english: { male: 'MALE', female: 'FEMALE', trans: 'TRANSGENDER' }
   };
 
   const currentMap = mapping[langLower] || mapping.english;
@@ -104,7 +129,6 @@ function getCorrectGenderLine(genderLine: string, gender: string, lang: string):
 function cleanIndianText(text: string | undefined, aggressive: boolean = false): string {
   if (!text) return '';
   let cleaned = text.replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
-  cleaned = cleaned.replace(/([\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D])\s+(?=\S)/g, '$1');
 
   const allIndicCombining = '[\\u0900-\\u0903\\u093C-\\u094D\\u0945-\\u0948\\u094E-\\u0954' +
     '\\u0980-\\u0983\\u09BC\\u09BE-\\u09CD\\u09D7' +
@@ -116,12 +140,15 @@ function cleanIndianText(text: string | undefined, aggressive: boolean = false):
     '\\u0C80-\\u0C83\\u0CBC\\u0CBE-\\u0CCD\\u0CD5-\\u0CD6\\u0CE2-\\u0CE3' +
     '\\u0D00-\\u0D03\\u0D3B-\\u0D3C\\u0D3E-\\u0D4D\\u0D57\\u0D62-\\u0D63]';
   cleaned = cleaned.replace(new RegExp('(?<=\\S)\\s(' + allIndicCombining + ')(?=\\S)', 'g'), '$1');
+  cleaned = cleaned.replace(/([\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D])\s+(?=\S)/g, '$1');
 
   if (aggressive) {
     cleaned = cleaned.replace(/([\u0900-\u0D7F])\s+(?=[\u0900-\u0D7F])/g, '$1');
   }
-  return cleaned;
+
+  return cleaned.normalize('NFC').replace(/\s{2,}/g, ' ').trim();
 }
+
 
 interface RelationAssets {
   so: string;
@@ -131,21 +158,21 @@ interface RelationAssets {
 }
 
 const RELATION_MAPPING: Record<string, RelationAssets> = {
-  hindi:       { so: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930:', wo: '\u092a\u0924\u094d\u0928\u0940:', do: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930\u0940:', co: '\u0915\u0947\u092f\u0930 \u0910\u095b:' },
-  devanagari:  { so: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930:', wo: '\u092a\u0924\u094d\u0928\u0940:', do: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930\u0940:', co: '\u0915\u0947\u092f\u0930 \u0910\u095b:' },
-  marathi:     { so: '\u092a\u0941\u0924\u094d\u0930:', wo: '\u092a\u0924\u094d\u0928\u0940:', do: '\u092a\u0941\u0924\u094d\u0930\u0940:', co: '\u0915\u0947\u0905\u0930 \u0910\u095b:' },
-  gujarati:    { so: '\u0aaa\u0ac1\u0aa4\u0acd\u0ab0:', wo: '\u0aaa\u0aa4\u0acd\u0ab8\u0acd\u0aa8\u0ac0:', do: '\u0aaa\u0ac1\u0aa4\u0acd\u0ab0\u0ac0:', co: '\u0a95\u0ac7\u0ab0 \u0a90\u0aab:' },
-  tamil:       { so: '\u0bae\u0b95\u0ba9\u0bcd:', wo: '\u0bae\u0ba9\u0bc5\u0bb5\u0bbf:', do: '\u0bae\u0b95\u0bb3\u0bcd:', co: '\u0b95\u0bc7\u0bb0\u0bcd \u0b85\u0b83\u0baa\u0bcd:' },
-  telugu:      { so: '\u0c15\u0c41\u0c2e\u0c3e\u0c30\u0c41\u0c21\u0c41:', wo: '\u0c2d\u0c3e\u0c30\u0c4d\u0c2f:', do: '\u0c15\u0c41\u0c2e\u0c3e\u0c30\u0c4d\u0c24\u0c46:', co: '\u0c15\u0c47\u0c30\u0c4d \u0c05\u0c2b\u0c4d:' },
-  kannada:     { so: '\u0cae\u0c97:', wo: '\u0caa\u0ca4\u0acd\u0ca8\u0cbf:', do: '\u0cae\u0c97\u0cb3\u0cc1:', co: '\u0c95\u0cc7\u0cb0\u0ccd \u0c85\u0ca5\u0ccd:' },
-  malayalam:   { so: '\u0d2e\u0d15\u0d7a:', wo: '\u0d2d\u0d3e\u0d30\u0d4d\u0d2f:', do: '\u0d2e\u0d15\u0d7d:', co: '\u0d15\u0d46\u0d2f\u0d7a \u0d13\u0d2b\u0d4d:' },
-  bengali:     { so: '\u09aa\u09c1\u09a4\u09cd\u09b0:', wo: '\u09b8\u09cd\u09a4\u09cd\u09b0\u09c0:', do: '\u0995\u09a8\u09cd\u09af\u09be:', co: '\u09af\u09a4\u09cd\u09a8\u09c7:' },
-  assamese:    { so: '\u09aa\u09c1\u09a4\u09cd\u09b0:', wo: '\u09aa\u0a95\u09cd\u09a8\u09c0:', do: '\u0995\u09a8\u09cd\u09af\u09be:', co: '\u09af\u09a4\u09cd\u09a8\u09c7:' },
-  punjabi:     { so: '\u0a2a\u0a4d\u0a30\u0a41\u0a24\u0a4d\u0a30:', wo: '\u0a2a\u0a24\u0a28\u0a40:', do: '\u0a27\u0a40:', co: '\u0a15\u0a47\u0a05\u0a30 \u0a06\u0a2b:' },
-  odia:        { so: '\u0b2a\u0b41\u0b24\u0b4d\u0b30:', wo: '\u0b2a\u0b24\u0b4d\u0b28\u0b40:', do: '\u0b15\u0b28\u0b4d\u0b2f\u0b3a:', co: '\u0b2f\u0b24\u0b4d\u0b28\u0b30\u0b47:' },
-  urdu:        { so: '\u0628\u06cc\u067f\u0627:', wo: '\u0632\u0648\u062c\u06c1:', do: '\u0628\u06cc\u067f\u06cc:', co: '\u0632\u06cc\u0631 \u0646\u06af\u0631\u0627\u0646\u06cc:' },
-  manipuri:    { so: '\u006d\u0061\u0063\u0068\u0061:', wo: '\u006c\u006f\u0069\u006e\u0062\u0069:', do: '\u006d\u0061\u0063\u0068\u0061\u0020\u0073\u0075\u0070\u0074\u0072\u0069:', co: '\u006b\u0065\u0079\u0061\u0072\u0020\u006f\u0066:' },
-  english:     { so: 'S/O:', wo: 'W/O:', do: 'D/O:', co: 'C/O:' }
+  hindi: { so: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930:', wo: '\u092a\u0924\u094d\u0928\u0940:', do: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930\u0940:', co: '\u0915\u0947\u092f\u0930 \u0910\u095b:' },
+  devanagari: { so: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930:', wo: '\u092a\u0924\u094d\u0928\u0940:', do: '\u093e\u0941\u092a\u0941\u0924\u094d\u0930\u0940:', co: '\u0915\u0947\u092f\u0930 \u0910\u095b:' },
+  marathi: { so: '\u092a\u0941\u0924\u094d\u0930:', wo: '\u092a\u0924\u094d\u0928\u0940:', do: '\u092a\u0941\u0924\u094d\u0930\u0940:', co: '\u0915\u0947\u0905\u0930 \u0910\u095b:' },
+  gujarati: { so: '\u0aaa\u0ac1\u0aa4\u0acd\u0ab0:', wo: '\u0aaa\u0aa4\u0acd\u0ab8\u0acd\u0aa8\u0ac0:', do: '\u0aaa\u0ac1\u0aa4\u0acd\u0ab0\u0ac0:', co: '\u0a95\u0ac7\u0ab0 \u0a90\u0aab:' },
+  tamil: { so: '\u0bae\u0b95\u0ba9\u0bcd:', wo: '\u0bae\u0ba9\u0bc5\u0bb5\u0bbf:', do: '\u0bae\u0b95\u0bb3\u0bcd:', co: '\u0b95\u0bc7\u0bb0\u0bcd \u0b85\u0b83\u0baa\u0bcd:' },
+  telugu: { so: '\u0c15\u0c41\u0c2e\u0c3e\u0c30\u0c41\u0c21\u0c41:', wo: '\u0c2d\u0c3e\u0c30\u0c4d\u0c2f:', do: '\u0c15\u0c41\u0c2e\u0c3e\u0c30\u0c4d\u0c24\u0c46:', co: '\u0c15\u0c47\u0c30\u0c4d \u0c05\u0c2b\u0c4d:' },
+  kannada: { so: '\u0cae\u0c97:', wo: '\u0caa\u0ca4\u0acd\u0ca8\u0cbf:', do: '\u0cae\u0c97\u0cb3\u0cc1:', co: '\u0c95\u0cc7\u0cb0\u0ccd \u0c85\u0ca5\u0ccd:' },
+  malayalam: { so: '\u0d2e\u0d15\u0d7a:', wo: '\u0d2d\u0d3e\u0d30\u0d4d\u0d2f:', do: '\u0d2e\u0d15\u0d7d:', co: '\u0d15\u0d46\u0d2f\u0d7a \u0d13\u0d2b\u0d4d:' },
+  bengali: { so: '\u09aa\u09c1\u09a4\u09cd\u09b0:', wo: '\u09b8\u09cd\u09a4\u09cd\u09b0\u09c0:', do: '\u0995\u09a8\u09cd\u09af\u09be:', co: '\u09af\u09a4\u09cd\u09a8\u09c7:' },
+  assamese: { so: '\u09aa\u09c1\u09a4\u09cd\u09b0:', wo: '\u09aa\u0a95\u09cd\u09a8\u09c0:', do: '\u0995\u09a8\u09cd\u09af\u09be:', co: '\u09af\u09a4\u09cd\u09a8\u09c7:' },
+  punjabi: { so: '\u0a2a\u0a4d\u0a30\u0a41\u0a24\u0a4d\u0a30:', wo: '\u0a2a\u0a24\u0a28\u0a40:', do: '\u0a27\u0a40:', co: '\u0a15\u0a47\u0a05\u0a30 \u0a06\u0a2b:' },
+  odia: { so: '\u0b2a\u0b41\u0b24\u0b4d\u0b30:', wo: '\u0b2a\u0b24\u0b4d\u0b28\u0b40:', do: '\u0b15\u0b28\u0b4d\u0b2f\u0b3a:', co: '\u0b2f\u0b24\u0b4d\u0b28\u0b30\u0b47:' },
+  urdu: { so: '\u0628\u06cc\u067f\u0627:', wo: '\u0632\u0648\u062c\u06c1:', do: '\u0628\u06cc\u067f\u06cc:', co: '\u0632\u06cc\u0631 \u0646\u06af\u0631\u0627\u0646\u06cc:' },
+  manipuri: { so: '\u006d\u0061\u0063\u0068\u0061:', wo: '\u006c\u006f\u0069\u006e\u0062\u0069:', do: '\u006d\u0061\u0063\u0068\u0061\u0020\u0073\u0075\u0070\u0074\u0072\u0069:', co: '\u006b\u0065\u0079\u0061\u0072\u0020\u006f\u0066:' },
+  english: { so: 'S/O:', wo: 'W/O:', do: 'D/O:', co: 'C/O:' }
 };
 
 function fixLocalCoPrefix(localAddress: string, englishAddress: string): string {
@@ -153,7 +180,7 @@ function fixLocalCoPrefix(localAddress: string, englishAddress: string): string 
 
   const trimmedLocal = localAddress.trim();
   // Preserve existing Indic relationship prefixes if already present
-  const indicPrefixCheck = /^(?:ના\s+દ્વારા|દ્વારા|द्वारा|आत्मज|સુપુત્ર|સુપુત્રી|પુત્ર|પુત્રી|પત્ની|पुत्र|पुत्री|पत्नी|केयर\s+ऑफ|કેર\s+ઓફ|મારફતે)[:\s]*/i;
+  const indicPrefixCheck = /^(?:ના\s+દ્વારા|ના|દ્વારા|द्वारा|आत्मज|સુપુત્ર|સુપુત્રી|પુત્ર|પુત્રી|પત્ની|पुत्र|पुत्री|पत्नी|કેયર\s+ઓફ|કેર\s+ઓફ|મારફતે)[:\s]*/i;
   if (indicPrefixCheck.test(trimmedLocal)) {
     return trimmedLocal;
   }
@@ -234,7 +261,8 @@ export async function POST(request: NextRequest) {
       subdivision,
       district,
       state,
-      rationId
+      rationId,
+      lang: requestedLang
     } = data;
 
     let userData = { plan: 'Free', remaining_cards: 0, plan_expiry: null as string | null };
@@ -277,8 +305,8 @@ export async function POST(request: NextRequest) {
     console.log(`[CO_FIX] localAddress after C/O fix: "${localAddress}"`);
 
     const hasLocalLanguage = !!(localName?.trim() && localAddress?.trim());
-    const upperAddress      = hasLocalLanguage ? localAddress      : address;
-    const lowerAddress      = address;
+    const upperAddress = hasLocalLanguage ? localAddress : address;
+    const lowerAddress = address;
     const upperAddressLabel = hasLocalLanguage ? (localAddressLabel || 'Address:') : 'Address:';
 
     const aadhaarNum = documentNumber || 'XXXX XXXX XXXX';
@@ -293,6 +321,50 @@ export async function POST(request: NextRequest) {
       ? `${name || ''} ${district || ''} ${state || ''} ${village || ''} ${subdivision || ''}`
       : `${localName || ''} ${localAddress || ''} ${localAddressLabel || ''}`;
     let { lang, fontId, fontFamily } = detectLanguage(combinedText);
+    if (requestedLang && ['gujarati', 'marathi', 'hindi', 'tamil', 'telugu', 'kannada', 'malayalam', 'bengali', 'punjabi', 'odia', 'assamese'].includes(requestedLang.toLowerCase())) {
+      lang = requestedLang.toLowerCase();
+    }
+
+    const CANONICAL_ADDRESS_LABELS: Record<string, string> = {
+      gujarati: 'સરનામું :',
+      hindi: 'पता :',
+      marathi: 'પત્તા :',
+      tamil: 'முகவரி :',
+      telugu: 'చిరునామా :',
+      kannada: 'ವಿಳಾಸ :',
+      malayalam: 'മേൽவിലാസം :',
+      bengali: 'ঠিকানা :',
+      assamese: 'ঠিকના :',
+      punjabi: 'ਪਤਾ :',
+      odia: 'ଠିକଣା :',
+      urdu: 'پتہ :',
+      english: 'Address:'
+    };
+
+    if (lang && CANONICAL_ADDRESS_LABELS[lang.toLowerCase()]) {
+      localAddressLabel = CANONICAL_ADDRESS_LABELS[lang.toLowerCase()];
+    }
+
+    if (lang === 'gujarati' && localName) {
+      const { repairGujaratiText } = require('@/utils/gujaratiRepair');
+      localName = repairGujaratiText(localName);
+    }
+
+    // Priority Check: If localName or localAddress contains Devanagari script (\u0900-\u097F),
+    // set NotoSansDevanagari font while accurately detecting Hindi vs Marathi.
+    // IMPORTANT: Skip this override if detectLanguage already confidently identified a regional language
+    // (e.g. Gujarati) from the local text — national Devanagari headers printed on ALL Aadhaar cards
+    // (like भारत सरकार) must NOT override a correctly-detected regional language.
+    const isAlreadyConfidentRegional = ['gujarati', 'tamil', 'telugu', 'kannada', 'malayalam', 'bengali', 'punjabi', 'odia', 'assamese'].includes(lang);
+    const devanagariText = `${localName || ''} ${localAddress || ''} ${state || ''}`;
+    if (!isAlreadyConfidentRegional && /[\u0900-\u097F]/.test(devanagariText)) {
+      fontId = 'NotoSansDevanagari';
+      fontFamily = 'NotoSansDevanagari';
+      const isMarathi = /[\u0933]/.test(devanagariText) ||
+                        /MAHARASHTRA/i.test(state || '') ||
+                        /ओळख|माझा|माझी|पडताळणी|महाराष्ट्र/i.test(devanagariText);
+      lang = isMarathi ? 'marathi' : 'hindi';
+    }
 
     if (normDocType === 'AYUSHMAN') {
       const stateUpper = (state || '').toUpperCase();
@@ -322,22 +394,23 @@ export async function POST(request: NextRequest) {
     }
 
     const SAFE_DOB_LABELS: Record<string, string> = {
-      gujarati:  '\u0a9c\u0aa8\u0acd\u0aae \u0aa4\u0abe\u0ab0\u0ac0\u0a96 / DOB: ',
-      hindi:     '\u091c\u0928\u094d\u092e \u0924\u093f\u0925\u093f / DOB: ',
-      marathi:   '\u091c\u0928\u094d\u092e \u0924\u093e\u0930\u0940\u0a96 / DOB: ',
-      tamil:     '\u0baa\u0bbf\u0bb1\u0ba8\u0bcd\u0ba4 \u0ba4\u0bc7\u0ba4\u0bbf / DOB: ',
-      telugu:    '\u0c2a\u0c41\u0c1f\u0c4d\u0c1f\u0c3f\u0c28 \u0c24\u0c47\u0c26\u0c40 / DOB: ',
-      kannada:   '\u0cb9\u0cc1\u0c9f\u0ccd\u0c9f\u0cbf\u0ca6 \u0ca6\u0cbf\u0ca8\u0cbe\u0c82\u0c95 / DOB: ',
-      malayalam: '\u0d1c\u0d28\u0d28 \u0d24\u0d40\u0d2f\u0d24\u0d3f / DOB: ',
-      bengali:   '\u099c\u09a8\u09cd\u09ae \u09a4\u09be\u09b0\u09bf\u0996 / DOB: ',
-      assamese:  '\u099c\u09a8\u09cd\u09ae \u09a4\u09be\u09b0\u09bf\u0996 / DOB: ',
-      punjabi:   '\u0a1c\u0a28\u0a2e \u0a2e\u0a3f\u0a24\u0a40 / DOB: ',
-      odia:      '\u0b1c\u0b28\u0b4d\u0b2e \u0b24\u0b3e\u0b30\u0b3f\u0b16 / DOB: ',
-      english:   'DOB: ',
+      gujarati: 'જન્મ તારીખ / DOB: ',
+      hindi: 'जन्म तिथि / DOB: ',
+      marathi: 'जन्म तारीख / DOB: ',
+      devanagari: 'जन्म तिथि / DOB: ',
+      tamil: 'பிறந்த தேதி / DOB: ',
+      telugu: 'పుట్టిన తేదీ / DOB: ',
+      kannada: 'ಹುಟ್ಟಿದ ದಿನಾಂಕ / DOB: ',
+      malayalam: 'ജനന തീയതി / DOB: ',
+      bengali: 'জন্ম তারিখ / DOB: ',
+      assamese: 'জন্ম তাৰিখ / DOB: ',
+      punjabi: 'ਜਨਮ ਮਿਤੀ / DOB: ',
+      odia: 'ଜନ୍ମ ତାରିଖ / DOB: ',
+      english: 'DOB: ',
     };
     if (lang && lang !== 'english') {
       const dateMatch = (dobLine || '').match(/\b(\d{2}[\/-]\d{2}[\/-]\d{4}|\d{4})\b/);
-      const dateOnly  = dateMatch ? dateMatch[1] : (dob || '');
+      const dateOnly = dateMatch ? dateMatch[1] : (dob || '');
       const safeLabel = SAFE_DOB_LABELS[lang] || SAFE_DOB_LABELS.english;
       dobLine = `${safeLabel}${dateOnly}`.trim();
     }
@@ -386,8 +459,15 @@ export async function POST(request: NextRequest) {
       });
     } else if (normDocType === 'AYUSHMAN') {
       const isOldLayout = !!data.isOldLayout;
-      const ayushmanLabels = AYUSHMAN_LABELS[lang] || AYUSHMAN_LABELS.english;
-      
+      let ayushmanLang = lang;
+      const suState = (state || '').toUpperCase();
+      if (!ayushmanLang || ayushmanLang === 'english') {
+        if (suState.includes('GUJARAT')) ayushmanLang = 'gujarati';
+        else if (suState.includes('MAHARASHTRA')) ayushmanLang = 'marathi';
+        else if (['BIHAR', 'JHARKHAND', 'UTTAR PRADESH', 'MADHYA PRADESH', 'RAJASTHAN', 'HARYANA', 'UTTARAKHAND', 'HIMACHAL', 'CHHATTISGARH', 'DELHI', 'PUNJAB'].some(x => suState.includes(x))) ayushmanLang = 'hindi';
+      }
+      const ayushmanLabels = AYUSHMAN_LABELS[ayushmanLang] || AYUSHMAN_LABELS.marathi || AYUSHMAN_LABELS.english;
+
       let backQrBase64 = '';
       try {
         backQrBase64 = await QRCode.toDataURL('https://pmjay.gov.in', { margin: 1, width: 150 });
@@ -420,19 +500,26 @@ export async function POST(request: NextRequest) {
         isOldLayout
       });
     } else if (normDocType === 'ESHRAM') {
-      htmlTemplate = generateEshramPVCHTML({
-        name,
-        dob,
-        gender,
-        documentNumber,
-        mobile,
-        address,
-        photoBase64,
-        localFontReg,
-        localFontBold,
-        localFontType,
-        localFontFamily: fontFamily
-      });
+      if (data.frontCardBase64 && data.backCardBase64) {
+        htmlTemplate = generateCroppedEshramPVCHTML({
+          frontCardBase64: data.frontCardBase64,
+          backCardBase64: data.backCardBase64
+        });
+      } else {
+        htmlTemplate = generateEshramPVCHTML({
+          name,
+          dob,
+          gender,
+          documentNumber,
+          mobile,
+          address,
+          photoBase64,
+          localFontReg,
+          localFontBold,
+          localFontType,
+          localFontFamily: fontFamily
+        });
+      }
     } else if (normDocType === 'VOTER') {
       if (data.frontCardBase64 && data.backCardBase64) {
         htmlTemplate = generateCroppedVoterPVCHTML({
@@ -484,24 +571,24 @@ export async function POST(request: NextRequest) {
       console.log(`[BAAL_AADHAAR] dob="${dob}" isBaalAadhaar=${isBaalAadhaar}`);
 
       const curFrontTemplate = (isBaalAadhaar && BAAL_TEMPLATE_FRONT_BASE64) ? BAAL_TEMPLATE_FRONT_BASE64 : TEMPLATE_FRONT_BASE64;
-      const curBackTemplate  = (isBaalAadhaar && BAAL_TEMPLATE_BACK_BASE64)  ? BAAL_TEMPLATE_BACK_BASE64  : TEMPLATE_BACK_BASE64;
+      const curBackTemplate = (isBaalAadhaar && BAAL_TEMPLATE_BACK_BASE64) ? BAAL_TEMPLATE_BACK_BASE64 : TEMPLATE_BACK_BASE64;
 
       htmlTemplate = generateAadhaarPVCHTML({
         name,
         localName: hasLocalLanguage ? localName : '',
-        dobLine:   hasLocalLanguage ? dobLine   : dobLine,
+        dobLine: hasLocalLanguage ? dobLine : dobLine,
         genderLine,
         mobile,
         aadhaarNum,
         vid,
         localAddressLabel: upperAddressLabel,
-        localAddress:      upperAddress,
-        address:           lowerAddress,
+        localAddress: upperAddress,
+        address: lowerAddress,
         hasLocalLanguage,
         issueDate,
         detailsAsOn,
         frontTemplateBase64: curFrontTemplate,
-        backTemplateBase64:  curBackTemplate,
+        backTemplateBase64: curBackTemplate,
         photoBase64,
         qrBase64,
         localFontReg,
@@ -515,16 +602,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    try {
-      fs.writeFileSync('C:/Users/NANO/Downloads/ayushman_compiled.html', htmlTemplate);
-    } catch (e) {}
-
     browser = await getBrowser();
     const page = await browser.newPage();
     await page.setViewport({ width: CARD_WIDTH, height: CARD_HEIGHT * 2 + 40, deviceScaleFactor: 1 });
 
-    // Use domcontentloaded: all fonts are base64 inline so there's nothing to wait for from network
-    await page.setContent(htmlTemplate, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // All fonts/images are inline base64 — domcontentloaded is sufficient, no network waits needed
+    await page.setContent(htmlTemplate, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
     await page.evaluate(async () => {
       // Fonts are already embedded as base64 data URIs — just wait for CSS font ready signal
@@ -546,36 +629,41 @@ export async function POST(request: NextRequest) {
     if (!frontEl) throw new Error('Front card element not found');
     if (!backEl) throw new Error('Back card element not found');
 
-    // Take both screenshots in parallel
+    // Take both screenshots in parallel — JPEG to keep response payload small
     const [frontBufferBase64, backBufferBase64] = await Promise.all([
-      frontEl.screenshot({ encoding: 'base64' }),
-      backEl.screenshot({ encoding: 'base64' }),
+      frontEl.screenshot({ encoding: 'base64', type: 'jpeg', quality: 92 }),
+      backEl.screenshot({ encoding: 'base64', type: 'jpeg', quality: 92 }),
     ]);
     console.log('FRONT_PNG_CREATED');
     console.log('BACK_PNG_CREATED');
 
-    const frontDataUrl = `data:image/png;base64,${frontBufferBase64}`;
-    const backDataUrl = `data:image/png;base64,${backBufferBase64}`;
+    const frontDataUrl = `data:image/jpeg;base64,${frontBufferBase64}`;
+    const backDataUrl = `data:image/jpeg;base64,${backBufferBase64}`;
 
     let pdfBase64: string | null = null;
     if (exportType === 'pdf_a4' || exportType === 'pdf_single') {
+      // Close main page before opening A4 page to free memory for PDF generation
+      await page.close();
+
       const a4Page = await browser.newPage();
       const a4Html = generateA4PrintHTML(frontDataUrl, backDataUrl);
-      await a4Page.setContent(a4Html, { waitUntil: 'domcontentloaded' });
-      await a4Page.evaluate(() => new Promise(r => setTimeout(r, 600)));
+      // Use 60s timeout — large base64 images can take time to inject into HTML
+      await a4Page.setContent(a4Html, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await a4Page.evaluate(() => new Promise(r => setTimeout(r, 200)));
 
       const pdfBuffer = await a4Page.pdf({
         format: 'A4',
         printBackground: true,
         margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
-      });
+        timeout: 60000,  // explicit 60s timeout for PDF generation
+      } as any);
 
       pdfBase64 = `data:application/pdf;base64,${Buffer.from(pdfBuffer).toString('base64')}`;
       console.log('PDF_CREATED');
       await a4Page.close();
+    } else {
+      await page.close();
     }
-
-    await page.close();
 
     try {
       const supabase = await createClient();
@@ -693,68 +781,84 @@ function generateA4PrintHTML(frontDataUrl: string, backDataUrl: string): string 
 
 
 function generateAadhaarPVCHTML(params: any): string {
-  const photoSrc          = params.photoBase64 || '';
-  const qrSrc             = params.qrBase64 || '';
-  const name              = params.name || '';
-  const localName         = params.localName || '';
-  const dobLine           = params.dobLine || '';
-  const genderLine        = params.genderLine || '';
-  const mobile            = params.mobile ? `Mob: ${params.mobile}` : '';
-  const aadhaarNum        = params.aadhaarNum || '';
-  const vid               = params.vid || '';
-  const localAddress      = params.localAddress || '';
-  const address           = params.address || '';
-  const hasLocalLanguage  = !!params.hasLocalLanguage;
-  const isBaalAadhaar     = !!params.isBaalAadhaar;
+  const photoSrc = params.photoBase64 || '';
+  const qrSrc = params.qrBase64 || '';
+  const name = params.name || '';
+  const localName = params.localName || '';
+  const dobLine = params.dobLine || '';
+  const genderLine = params.genderLine || '';
+  const mobile = params.mobile ? `Mob: ${params.mobile}` : '';
+  const aadhaarNum = params.aadhaarNum || '';
+  const vid = params.vid || '';
+  const localAddress = params.localAddress || '';
+  const address = params.address || '';
+  const hasLocalLanguage = !!params.hasLocalLanguage;
+  const isBaalAadhaar = !!params.isBaalAadhaar;
+  const issueDate = params.issueDate || '';
+  const detailsAsOn = params.detailsAsOn || '';
+  const langKey = (params.lang || 'english').toLowerCase();
 
-  let displayLocalAddress = localAddress;
-  let displayLocalAddressLabel = params.localAddressLabel || 'Address:';
+  const CANONICAL_MAP: Record<string, string> = {
+    gujarati: 'સરનામું :',
+    hindi: 'पता :',
+    marathi: 'पत्ता :',
+    tamil: 'முகவரி :',
+    telugu: 'చిరునామా :',
+    kannada: 'ವಿಳಾಸ :',
+    malayalam: 'മേൽവിലാസം :',
+    bengali: 'ঠিকানা :',
+    assamese: 'ঠিকના :',
+    punjabi: 'ਪਤਾ :',
+    odia: 'ଠିକଣା :',
+    urdu: 'پتہ :',
+    english: 'Address:'
+  };
+
+  let displayLocalAddress = (localAddress || '').replace(/^(સરનામું|સરનામુ|પત્તા|पता|முகவரி|చిరునామా|విళಾಸ|മേൽവിലാസം|ঠিকানা|ਪਤਾ|ଠିକଣਾ)\s*[:/]?\s*/gi, '').trim();
+  let displayLocalAddressLabel = CANONICAL_MAP[langKey] || params.localAddressLabel || 'Address:';
   let renderEnglishAddress = true;
 
-  if (!localAddress.trim()) {
+  if (!displayLocalAddress.trim()) {
     displayLocalAddress = address;
     displayLocalAddressLabel = "Address:";
     renderEnglishAddress = false;
   }
-  const issueDate         = params.issueDate || '';
-  const detailsAsOn       = params.detailsAsOn || '';
-  const langKey           = (params.lang || 'english').toLowerCase();
 
   // ── Heading texts overlaid on top of the tricolor strokes ──────────────────
   // Front: "Bharat Sarkar" / "Government of India"
   // Back : UIDAI full name in local language / English
   const FRONT_HEADING: Record<string, { line1: string; line2: string }> = {
-    gujarati:  { line1: 'ભારત સરકાર',                              line2: 'Government of India' },
-    hindi:     { line1: 'भारत सरकार',                              line2: 'Government of India' },
-    marathi:   { line1: 'भारत सरकार',                              line2: 'Government of India' },
-    tamil:     { line1: 'இந்திய அரசு',                             line2: 'Government of India' },
-    telugu:    { line1: 'భారత ప్రభుత్వం',                          line2: 'Government of India' },
-    kannada:   { line1: 'ಭಾರತ ಸರ್ಕಾರ',                            line2: 'Government of India' },
-    malayalam: { line1: 'ഭാരത സർക്കാർ',                           line2: 'Government of India' },
-    bengali:   { line1: 'ভারত সরকার',                              line2: 'Government of India' },
-    assamese:  { line1: 'ভাৰত চৰকাৰ',                              line2: 'Government of India' },
-    punjabi:   { line1: 'ਭਾਰਤ ਸਰਕਾਰ',                             line2: 'Government of India' },
-    odia:      { line1: 'ଭାରତ ସରକାର',                              line2: 'Government of India' },
-    urdu:      { line1: 'حکومتِ ہند',                              line2: 'Government of India' },
-    english:   { line1: 'भारत सरकार',                              line2: 'Government of India' },
+    gujarati: { line1: 'ભારત સરકાર', line2: 'Government of India' },
+    hindi: { line1: 'भारत सरकार', line2: 'Government of India' },
+    marathi: { line1: 'भारत सरकार', line2: 'Government of India' },
+    tamil: { line1: 'இந்திய அரசு', line2: 'Government of India' },
+    telugu: { line1: 'భారత ప్రభుత్వం', line2: 'Government of India' },
+    kannada: { line1: 'ಭಾರತ ಸರ್ಕಾರ', line2: 'Government of India' },
+    malayalam: { line1: 'ഭാരത സർക്കാർ', line2: 'Government of India' },
+    bengali: { line1: 'ভারত সরকার', line2: 'Government of India' },
+    assamese: { line1: 'ভাৰত চৰকাৰ', line2: 'Government of India' },
+    punjabi: { line1: 'ਭਾਰਤ ਸਰਕਾਰ', line2: 'Government of India' },
+    odia: { line1: 'ଭାରତ ସରକାର', line2: 'Government of India' },
+    urdu: { line1: 'حکومتِ ہند', line2: 'Government of India' },
+    english: { line1: 'भारत सरकार', line2: 'Government of India' },
   };
   const BACK_HEADING: Record<string, { line1: string; line2: string }> = {
-    gujarati:  { line1: 'ભારતીય વિશિષ્ટ ઓળખ પ્રાધિકરણ',           line2: 'Unique Identification Authority of India' },
-    hindi:     { line1: 'भारतीय विशिष्ट पहचान प्राधिकरण',           line2: 'Unique Identification Authority of India' },
-    marathi:   { line1: 'भारतीय विशिष्ट ओळख प्राधिकरण',             line2: 'Unique Identification Authority of India' },
-    tamil:     { line1: 'இந்திய தனித்துவ அடையாள ஆணையம்',            line2: 'Unique Identification Authority of India' },
-    telugu:    { line1: 'భారత విశిష్ట గుర్తింపు సంస్థ',              line2: 'Unique Identification Authority of India' },
-    kannada:   { line1: 'ಭಾರತೀಯ ವಿಶಿಷ್ಟ ಗುರುತಿನ ಪ್ರಾಧಿಕಾರ',          line2: 'Unique Identification Authority of India' },
-    malayalam: { line1: 'ഭാരതീയ വിശിഷ്ട തിരിച്ചറിൽ അഥോറിറ്റി',       line2: 'Unique Identification Authority of India' },
-    bengali:   { line1: 'ভারতীয় বিশিষ্ট পরিচয় কর্তৃপক্ষ',           line2: 'Unique Identification Authority of India' },
-    assamese:  { line1: 'ভাৰতীয় বিশিষ্ট পৰিচয় কৰ্তৃপক্ষ',           line2: 'Unique Identification Authority of India' },
-    punjabi:   { line1: 'ਭਾਰਤੀ ਵਿਲੱਖਣ ਪਛਾਣ ਅਥਾਰਟੀ',                 line2: 'Unique Identification Authority of India' },
-    odia:      { line1: 'ଭାରତୀୟ ବିଶିଷ୍ଟ ପରିଚୟ ପ୍ରାଧିକରଣ',             line2: 'Unique Identification Authority of India' },
-    urdu:      { line1: 'بھارتی منفرد شناختی اتھارٹی',              line2: 'Unique Identification Authority of India' },
-    english:   { line1: 'भारतीय विशिष्ट पहचान प्राधिकरण',           line2: 'Unique Identification Authority of India' },
+    gujarati: { line1: 'ભારતીય વિશિષ્ટ ઓળખ પ્રાધિકરણ', line2: 'Unique Identification Authority of India' },
+    hindi: { line1: 'भारतीय विशिष्ट पहचान प्राधिकरण', line2: 'Unique Identification Authority of India' },
+    marathi: { line1: 'भारतीय विशिष्ट ओळख प्राधिकरण', line2: 'Unique Identification Authority of India' },
+    tamil: { line1: 'இந்திய தனித்துவ அடையாள ஆணையம்', line2: 'Unique Identification Authority of India' },
+    telugu: { line1: 'భారత విశిష్ట గుర్తింపు సంస్థ', line2: 'Unique Identification Authority of India' },
+    kannada: { line1: 'ಭಾರತೀಯ ವಿಶಿಷ್ಟ ಗುರುತಿನ ಪ್ರಾಧಿಕಾರ', line2: 'Unique Identification Authority of India' },
+    malayalam: { line1: 'ഭാരതീയ വിശിഷ്ട തിരിച്ചറിൽ അഥോറിറ്റി', line2: 'Unique Identification Authority of India' },
+    bengali: { line1: 'ভারতীয় বিশিষ্ট পরিচয় কর্তৃপক্ষ', line2: 'Unique Identification Authority of India' },
+    assamese: { line1: 'ভাৰতীয় বিশিষ্ট পৰিচয় কৰ্তৃপক্ষ', line2: 'Unique Identification Authority of India' },
+    punjabi: { line1: 'ਭਾਰਤੀ ਵਿਲੱਖਣ ਪਛਾਣ ਅਥਾਰਟੀ', line2: 'Unique Identification Authority of India' },
+    odia: { line1: 'ଭାରତୀୟ ବିଶିଷ୍ଟ ପରିଚୟ ପ୍ରାଧିକରଣ', line2: 'Unique Identification Authority of India' },
+    urdu: { line1: 'بھارتی منفرد شناختی اتھارٹی', line2: 'Unique Identification Authority of India' },
+    english: { line1: 'भारतीय विशिष्ट पहचान प्राधिकरण', line2: 'Unique Identification Authority of India' },
   };
   const frontH = FRONT_HEADING[langKey] || FRONT_HEADING.english;
-  const backH  = BACK_HEADING[langKey]  || BACK_HEADING.english;
+  const backH = BACK_HEADING[langKey] || BACK_HEADING.english;
 
   // ── Warning box text ───────────────────────────────────────────────────────
   const warnings: Record<string, { local: string; english: string }> = {
@@ -816,52 +920,52 @@ function generateAadhaarPVCHTML(params: any): string {
 
   // ── Baal Aadhaar: right-edge vertical strip label + notice box text ─────────
   const BAAL_STRIP: Record<string, string> = {
-    gujarati:  'બાલ આધાર',
-    hindi:     'बाल आधार',
-    marathi:   'बाल आधार',
-    tamil:     'குழந்தை ஆதார்',
-    telugu:    'బాల్ ఆధార్',
-    kannada:   'ಬಾಲ್ ಆಧಾರ್',
+    gujarati: 'બાલ આધાર',
+    hindi: 'बाल आधार',
+    marathi: 'बाल आधार',
+    tamil: 'குழந்தை ஆதார்',
+    telugu: 'బాల్ ఆధార్',
+    kannada: 'ಬಾಲ್ ಆಧಾರ್',
     malayalam: 'ബാൽ ആധാർ',
-    bengali:   'বাল আধার',
-    assamese:  'বাল আধাৰ',
-    punjabi:   'ਬਾਲ ਆਧਾਰ',
-    odia:      'ବାଲ ଆଧାର',
-    urdu:      'بال آدھار',
-    english:   'Baal Aadhaar',
+    bengali: 'বাল আধার',
+    assamese: 'বাল আধাৰ',
+    punjabi: 'ਬਾਲ ਆਧਾਰ',
+    odia: 'ବାଲ ଆଧାର',
+    urdu: 'بال آدھار',
+    english: 'Baal Aadhaar',
   };
   const BAAL_NOTICE: Record<string, string> = {
-    gujarati:  'આ આધાર માત્ર 5 વર્ષની ઉંમર સુધીજ માન્ય છે.',
-    hindi:     'यह आधार 5 वर्ष की उम्र तक ही मान्य है।',
-    marathi:   'हा आधार फक्त 5 वर्षांच्या वयापर्यंत वैध आहे.',
-    tamil:     'இந்த ஆதார் 5 வயது வரை மட்டுமே செல்லுபடியாகும்.',
-    telugu:    'ఈ ఆధార్ 5 సంవత్సరాల వయస్సు వరకు మాత్రమే చెల్లుతుంది.',
-    kannada:   'ಈ ಆಧಾರ್ 5 ವರ್ಷ ವಯಸ್ಸಿನವರೆಗೆ ಮಾತ್ರ ಮಾನ್ಯವಾಗಿರುತ್ತದೆ.',
+    gujarati: 'આ આધાર માત્ર 5 વર્ષની ઉંમર સુધીજ માન્ય છે.',
+    hindi: 'यह आधार 5 वर्ष की उम्र तक ही मान्य है।',
+    marathi: 'हा आधार फक्त 5 वर्षांच्या वयापर्यंत वैध आहे.',
+    tamil: 'இந்த ஆதார் 5 வயது வரை மட்டுமே செல்லுபடியாகும்.',
+    telugu: 'ఈ ఆధార్ 5 సంవత్సరాల వయస్సు వరకు మాత్రమే చెల్లుతుంది.',
+    kannada: 'ಈ ಆಧಾರ್ 5 ವರ್ಷ ವಯಸ್ಸಿನವರೆಗೆ ಮಾತ್ರ ಮಾನ್ಯವಾಗಿರುತ್ತದೆ.',
     malayalam: 'ഈ ആധാർ 5 വയസ്സ് വരെ മാത്രം സാധുതയുള്ളതാണ്.',
-    bengali:   'এই আধার শুধুমাত্র ৫ বছর বয়স পর্যন্ত বৈধ।',
-    assamese:  'এই আধাৰ মাত্ৰ ৫ বছৰ বয়স পৰ্যন্ত বৈধ।',
-    punjabi:   'ਇਹ ਆਧਾਰ ਸਿਰਫ਼ 5 ਸਾਲ ਦੀ ਉਮਰ ਤੱਕ ਹੀ ਮਾਨਤਾ ਪ੍ਰਾਪਤ ਹੈ।',
-    odia:      'ଏହି ଆଧାର ମାତ୍ର 5 ବର୍ଷ ବୟସ ପର୍ଯ୍ୟନ୍ତ ବୈଧ।',
-    urdu:      'یہ آدھار صرف 5 سال کی عمر تک کے لیے معتبر ہے۔',
-    english:   'This Aadhaar is valid till 5 years of age.',
+    bengali: 'এই আধার শুধুমাত্র ৫ বছর বয়স পর্যন্ত বৈধ।',
+    assamese: 'এই আধাৰ মাত্ৰ ৫ বছৰ বয়স পৰ্যন্ত বৈধ।',
+    punjabi: 'ਇਹ ਆਧਾਰ ਸਿਰਫ਼ 5 ਸਾਲ ਦੀ ਉਮਰ ਤੱਕ ਹੀ ਮਾਨਤਾ ਪ੍ਰਾਪਤ ਹੈ।',
+    odia: 'ଏହି ଆଧାର ମାତ୍ର 5 ବର୍ଷ ବୟସ ପର୍ଯ୍ୟନ୍ତ ବୈଧ।',
+    urdu: 'یہ آدھار صرف 5 سال کی عمر تک کے لیے معتبر ہے۔',
+    english: 'This Aadhaar is valid till 5 years of age.',
   };
-  const baalStripText  = BAAL_STRIP[langKey]  || BAAL_STRIP.english;
+  const baalStripText = BAAL_STRIP[langKey] || BAAL_STRIP.english;
   const baalNoticeText = BAAL_NOTICE[langKey] || BAAL_NOTICE.english;
 
   const SLOGANS: Record<string, string> = {
-    gujarati:  'મારો આધાર, મારી ઓળખ',
-    hindi:     'मेरा आधार, मेरी पहचान',
-    marathi:   'माझा आधार, माझी ओळख',
-    telugu:    'నా ఆధార్, నా గుర్తింపు',
-    tamil:     'எனது ஆதார், எனது அடையாளம்',
-    kannada:   'ನನ್ನ ಆಧಾರ್, ನನ್ನ ಗುರುತು',
+    gujarati: 'મારો આધાર, મારી ઓળખ',
+    hindi: 'मेरा आधार, मेरी पहचान',
+    marathi: 'माझा आधार, माझी ओळख',
+    telugu: 'నా ఆధార్, నా గుర్తింపు',
+    tamil: 'எனது ஆதார், எனது அடையாளம்',
+    kannada: 'ನನ್ನ ಆಧಾರ್, ನನ್ನ ಗುರುತು',
     malayalam: 'എന്റെ ആധാർ, എന്റെ അടയാളം',
-    bengali:   'আমার আধার, আমার পরিচয়',
-    assamese:  'মোৰ আধাৰ, মোৰ পৰিচয়',
-    punjabi:   'ਮੇਰਾ ਆਧਾਰ, ਮੇਰੀ ਪਛਾਣ',
-    odia:      'ମୋ ଆଧାର, ମୋ ପରିଚୟ',
-    urdu:      'میرا آدھار، میری پہچان',
-    english:   'My Aadhaar, My Identity',
+    bengali: 'আমার আধার, আমার পরিচয়',
+    assamese: 'মোৰ আধাৰ, মোৰ পৰিচয়',
+    punjabi: 'ਮੇਰਾ ਆਧਾਰ, ਮੇਰੀ ਪਛਾਣ',
+    odia: 'ମୋ ଆଧାର, ମୋ ପରିଚୟ',
+    urdu: 'میرا آدھار، میری پہچان',
+    english: 'My Aadhaar, My Identity',
   };
 
   const rawSlogan = SLOGANS[langKey] || SLOGANS.english;
@@ -893,19 +997,19 @@ function generateAadhaarPVCHTML(params: any): string {
   const formattedSlogan = formatSloganHTML(rawSlogan);
 
   const AADHAAR_LOGO_TEXTS: Record<string, string> = {
-    gujarati:  'આધાર',
-    hindi:     'आधार',
-    marathi:   'आधार',
-    telugu:    'ఆధార్',
-    tamil:     'ஆதார்',
-    kannada:   'ಆಧಾರ್',
+    gujarati: 'આધાર',
+    hindi: 'आधार',
+    marathi: 'आधार',
+    telugu: 'ఆధార్',
+    tamil: 'ஆதார்',
+    kannada: 'ಆಧಾರ್',
     malayalam: 'ആധാർ',
-    bengali:   'আধার',
-    assamese:  'আধাৰ',
-    punjabi:   'ਆਧਾਰ',
-    odia:      'ଆଧାର',
-    urdu:      'آدھار',
-    english:   'Aadhaar',
+    bengali: 'আধার',
+    assamese: 'আধাৰ',
+    punjabi: 'ਆਧਾਰ',
+    odia: 'ଆଧାର',
+    urdu: 'آدھار',
+    english: 'Aadhaar',
   };
   const logoText = AADHAAR_LOGO_TEXTS[langKey] || AADHAAR_LOGO_TEXTS.english;
 
@@ -970,7 +1074,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 150px;
       top: 28px;
       width: 560px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSerif-Regular', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', sans-serif;
       font-size: 34px;
       font-weight: normal;
       color: #000000;
@@ -985,7 +1089,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 150px;
       top: 83px;
       width: 560px;
-      font-family: 'NotoSerif-Regular', 'Arial', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
       font-size: 26px;
       font-weight: normal;
       color: #000000;
@@ -1017,9 +1121,9 @@ function generateAadhaarPVCHTML(params: any): string {
       transform: translate(-50%, -50%) rotate(-90deg);
       transform-origin: center;
       white-space: nowrap;
-      font-family: 'NotoSerif-Bold';
+      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
       font-size: 15px;
-      font-weight: bold;
+      font-weight: normal;
       color: #000000;
       text-align: center;
     }
@@ -1027,10 +1131,11 @@ function generateAadhaarPVCHTML(params: any): string {
     .local-name {
       position: absolute;
       left: 242px;
-      top: 185px;
+      top: 172px;
       width: 730px;
-      font-family: '${params.localFontFamily}-Bold', 'Shruti', 'Nirmala UI', sans-serif;
-      font-size: 26px;
+      font-family: '${params.localFontFamily}-Bold', sans-serif;
+      font-size: 29.5px;
+      font-weight: bold;
       color: #000000;
       white-space: nowrap;
       text-rendering: optimizeLegibility;
@@ -1042,10 +1147,11 @@ function generateAadhaarPVCHTML(params: any): string {
     .english-name {
       position: absolute;
       left: 242px;
-      top: 220px;
+      top: 211px;
       width: 730px;
-      font-family: 'NotoSerif-Bold', '${params.localFontFamily}-Bold';
-      font-size: 26px;
+      font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
+      font-size: 29.5px;
+      font-weight: bold;
       color: #000000;
       line-height: 1.2;
       white-space: nowrap;
@@ -1054,10 +1160,11 @@ function generateAadhaarPVCHTML(params: any): string {
     .dob-line {
       position: absolute;
       left: 242px;
-      top: 255px;
+      top: 250px;
       width: 730px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSerif-Regular';
-      font-size: 24px;
+      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-size: 26.5px;
+      font-weight: normal;
       color: #000000;
       line-height: 1.2;
       white-space: nowrap;
@@ -1066,10 +1173,11 @@ function generateAadhaarPVCHTML(params: any): string {
     .gender-line {
       position: absolute;
       left: 242px;
-      top: 290px;
+      top: 289px;
       width: 730px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSerif-Regular';
-      font-size: 24px;
+      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-size: 26.5px;
+      font-weight: normal;
       color: #000000;
       line-height: 1.2;
       white-space: nowrap;
@@ -1078,10 +1186,11 @@ function generateAadhaarPVCHTML(params: any): string {
     .mobile-line {
       position: absolute;
       left: 242px;
-      top: 325px;
+      top: 328px;
       width: 730px;
-      font-family: 'NotoSerif-Regular';
-      font-size: 24px;
+      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-size: 26.5px;
+      font-weight: normal;
       color: #000000;
       line-height: 1.2;
       white-space: nowrap;
@@ -1089,33 +1198,37 @@ function generateAadhaarPVCHTML(params: any): string {
 
     .warning-box {
       position: absolute;
-      left: 242px;
-      top: 360px;
-      width: 724px;
+      left: 235px;
+      top: 365px;
+      width: 745px;
       border: 2px solid #cc0000;
-      padding: 6px 9px;
+      border-radius: 4px;
+      padding: 6px 10px;
       box-sizing: border-box;
-      background: transparent;
+      background: rgba(255, 255, 255, 0.95);
     }
 
     .warning-local {
-      font-family: '${params.localFontFamily}-Bold';
-      font-size: 14px;
+      font-family: '${params.localFontFamily}-Bold', sans-serif;
+      font-size: 15.5px;
+      font-weight: 700;
       color: #000000;
-      line-height: 1.4;
-      margin-bottom: 5px;
+      line-height: 1.35;
+      margin-bottom: 3px;
     }
 
     .warning-english {
-      font-family: 'NotoSerif-Regular';
-      font-size: 13px;
+      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-size: 14px;
+      font-weight: normal;
       color: #000000;
-      line-height: 1.45;
+      line-height: 1.35;
     }
 
     .warning-english-bold {
-      font-family: 'NotoSerif-Bold';
-      font-size: 13px;
+      font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
       color: #000000;
     }
 
@@ -1136,11 +1249,15 @@ function generateAadhaarPVCHTML(params: any): string {
       z-index: 200;
     }
 
-    /* ── Baal Aadhaar: validity notice box ── */
-    .baal-notice {
+    /* ── Baal Aadhaar Front Card Layout System ── */
+    #card-front.baal-card-front {
+      display: block;
+    }
+
+    #card-front.baal-card-front .baal-notice {
       position: absolute;
       right: 48px;
-      top: 324px;
+      top: 308px;
       border: 1.5px solid #cc0000;
       padding: 3px 8px;
       box-sizing: border-box;
@@ -1155,11 +1272,24 @@ function generateAadhaarPVCHTML(params: any): string {
       z-index: 150;
     }
 
+    #card-front.baal-card-front .warning-box {
+      position: absolute;
+      left: 235px;
+      top: 360px;
+      width: 745px;
+      border: 2px solid #cc0000;
+      border-radius: 4px;
+      padding: 5px 10px;
+      box-sizing: border-box;
+      background: rgba(255, 255, 255, 0.98);
+      z-index: 100;
+    }
+
     .aadhaar-number-block {
       width: 600px;
       position: absolute;
       left: 50%;
-      bottom: 70px; /* moved down to keep layout stable */
+      bottom: 70px;
       transform: translateX(-50%);
       display: flex;
       flex-direction: column;
@@ -1169,65 +1299,69 @@ function generateAadhaarPVCHTML(params: any): string {
     }
 
     #card-back .aadhaar-number-block {
-      bottom: 80px; /* slightly higher on back for consistent spacing */
+      bottom: 104px; /* lifted on back card to sit cleanly above back red line */
+    }
+
+    #card-front .aadhaar-number-block {
+      bottom: 76px; /* Default for Adult Aadhaar front red line */
+    }
+
+    #card-front.baal-card-front .aadhaar-number-block {
+      bottom: 104px !important; /* Positioned cleanly above red line matching back card */
     }
 
     /* ── UIDAI Contact Info (back card only) ── */
     .uidai-contact {
       position: absolute;
-      bottom: 12px; /* give a bit more margin from card edge */
+      bottom: 5px; /* shifted slightly up towards red line */
       left: 0;
       width: 100%;
+      height: 78px; /* strip from red line to card bottom */
       display: flex;
       flex-direction: row;
-      align-items: center;
-      justify-content: center;
-      gap: 24px;
-      font-family: 'NotoSerif-Regular';
-      font-size: 15px; /* larger for readability */
+      align-items: center;       /* vertical center in the strip */
+      justify-content: space-between;
+      padding: 0 38px;
+      font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
+      font-size: 27px;
+      font-weight: 800;
       color: #000000;
-      line-height: 1.2;
+      line-height: 1;
       z-index: 100;
+      box-sizing: border-box;
     }
     .uidai-contact-item {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       white-space: nowrap;
+      font-size: 27px;
+      font-weight: 800;
     }
     .uidai-contact-icon {
-      font-size: 16px; /* bigger icons */
-    }
-    .uidai-contact-item {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      white-space: nowrap;
-    }
-    .uidai-contact-icon {
-      font-size: 14px;
+      font-size: 29px;
     }
 
     .aadhaar-num-text {
-      font-family: 'NotoSerif-Bold';
-      font-size: 56px;
-      font-weight: 700;
+      font-family: '${params.localFontFamily}-Bold', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
+      font-size: 50px;
+      font-weight: 800;
       color: #000000;
-      letter-spacing: 3px;
-      padding-left: 3px;   
+      letter-spacing: 4px;
+      padding-left: 4px;   
       line-height: 1;
       text-align: center;
       white-space: nowrap;
     }
 
     .vid-num-text {
-      font-family: 'NotoSerif-Regular';
-      font-size: 20px;
-      font-weight: 400;
+      font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
       color: #111111;
       line-height: 1;
       text-align: center;
-      margin-top: 5px;
+      margin-top: -3px;
       white-space: nowrap;
     }
 
@@ -1251,9 +1385,10 @@ function generateAadhaarPVCHTML(params: any): string {
     .local-address-label {
       position: absolute;
       left: 44px;
-      top: 148px;
-      font-family: '${params.localFontFamily}-Bold', 'Shruti', 'Nirmala UI', sans-serif;
-      font-size: 22px;
+      top: 145px;
+      font-family: '${params.localFontFamily}-Bold', sans-serif;
+      font-size: 25px;
+      font-weight: bold;
       color: #000000;
       white-space: nowrap;
     }
@@ -1263,10 +1398,10 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 44px;
       top: 178px;
       width: 660px;
-      font-family: '${params.localFontFamily}-Regular', 'Shruti', 'Nirmala UI', sans-serif;
-      font-size: 24px;
+      font-family: '${params.localFontFamily}-Regular', sans-serif;
+      font-size: 27px;
       color: #000000;
-      line-height: 1.45;
+      line-height: 1.35;
       word-break: break-word;
     }
 
@@ -1274,8 +1409,9 @@ function generateAadhaarPVCHTML(params: any): string {
       position: absolute;
       left: 44px;
       top: 280px;
-      font-family: 'NotoSerif-Bold', '${params.localFontFamily}-Bold';
-      font-size: 22px;
+      font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
+      font-size: 25px;
+      font-weight: bold;
       color: #000000;
       white-space: nowrap;
     }
@@ -1283,12 +1419,12 @@ function generateAadhaarPVCHTML(params: any): string {
     .english-address {
       position: absolute;
       left: 44px;
-      top: 306px;
+      top: 308px;
       width: 660px;
-      font-family: 'NotoSerif-Regular', '${params.localFontFamily}-Regular';
-      font-size: 24px;
+      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-size: 26px;
       color: #000000;
-      line-height: 1.4;
+      line-height: 1.35;
       word-break: break-word;
     }
 
@@ -1300,12 +1436,15 @@ function generateAadhaarPVCHTML(params: any): string {
       width: 100%;
       text-align: center;
       font-family: '${params.localFontFamily}-Bold', 'Shruti', 'Nirmala UI', sans-serif;
-      font-size: 42px;
+      font-size: 43px;
       font-weight: bold;
       color: #000000;
       line-height: 1;
       letter-spacing: 0.5px;
       z-index: 100;
+    }
+    .baal-card-front .slogan-container {
+      bottom: 24px !important;
     }
     .slogan-red {
       color: #cc0000;
@@ -1348,8 +1487,21 @@ function generateAadhaarPVCHTML(params: any): string {
       if (!block) return;
 
       const isBack = card.id === 'card-back';
-      const defaultBottom = isBack ? 60 : 52;
-      const minBottom = isBack ? 50 : 42;
+
+      if (!isBack) {
+        /* Front card: position Aadhaar block for Baal Aadhaar (98px) vs Adult Aadhaar (76px) */
+        const isBaal = card.classList.contains('baal-card-front') || !!card.querySelector('.baal-notice');
+        if (isBaal) {
+          block.style.setProperty('bottom', '94px', 'important');
+        } else {
+          block.style.setProperty('bottom', '76px', 'important');
+        }
+        return;
+      }
+
+      /* Back card: start at safe height above red line */
+      const defaultBottom = 104;
+      const minBottom    = 102;
 
       const collideSelectors = [
         '.local-address',
@@ -1407,8 +1559,8 @@ function generateAadhaarPVCHTML(params: any): string {
       fitSingleLine('.dob-line', 730, 24);
       fitSingleLine('.gender-line', 730, 24);
       fitSingleLine('.mobile-line', 730, 24);
-      fitSingleLine('.aadhaar-num-text', 580, 56);
-      fitSingleLine('.vid-num-text', 580, 20);
+      fitSingleLine('.aadhaar-num-text', 580, 52);
+      fitSingleLine('.vid-num-text', 580, 21);
 
       const fitMultiLine = (selector, maxH) => {
         const elements = document.querySelectorAll(selector);
@@ -1422,8 +1574,8 @@ function generateAadhaarPVCHTML(params: any): string {
         });
       fitMultiLine('.local-address', 130);
       fitMultiLine('.english-address', 120);
-      fitMultiLine('.warning-local', 32);
-      fitMultiLine('.warning-english', 28);
+      fitMultiLine('.warning-local', 60);
+      fitMultiLine('.warning-english', 55);
 
       document.querySelectorAll('.aadhaar-number-block').forEach(block => {
         block.style.outline = '2px solid red';
@@ -1449,86 +1601,87 @@ function generateAadhaarPVCHTML(params: any): string {
 <body>
 
   <!--FRONT CARD-->
-  <div class="card-container" id="card-front">
+  <div class="card-container ${isBaalAadhaar ? 'baal-card-front' : ''}" id="card-front">
 
     <!-- ── Heading overlays on tricolor strokes ── -->
-    <div class="card-heading-line1">${ frontH.line1 }</div>
-    <div class="card-heading-line2">${ frontH.line2 }</div>
+    <div class="card-heading-line1">${frontH.line1}</div>
+    <div class="card-heading-line2">${frontH.line2}</div>
 
     <!-- ── Logo Text Overlay ── -->
-    <div class="logo-text-overlay">${ logoText }</div>
+    <div class="logo-text-overlay">${logoText}</div>
 
     <!-- ── Left rotated strip ── -->
-    <div class="left-strip">Aadhaar No. Issued: ${ issueDate }</div>
+    <div class="left-strip">Aadhaar No. Issued: ${issueDate}</div>
 
     <!-- ── Photo ── -->
     <div class="photo-container">
-      ${ photoSrc ? `<img src="${photoSrc}" class="photo-img" />` : '' }
+      ${photoSrc ? `<img src="${photoSrc}" class="photo-img" />` : ''}
     </div>
 
     <!-- ── Personal Info ── -->
-    ${ localName ? `<div class="local-name">${localName}</div>` : '' }
-    <div class="english-name">${ name }</div>
-    <div class="dob-line">${ dobLine }</div>
-    <div class="gender-line">${ genderLine }</div>
-    ${ mobile ? `<div class="mobile-line">${mobile}</div>` : '' }
+    ${localName ? `<div class="local-name">${localName}</div>` : ''}
+    <div class="english-name">${name}</div>
+    <div class="dob-line">${dobLine}</div>
+    <div class="gender-line">${genderLine}</div>
+    ${mobile ? `<div class="mobile-line">${mobile}</div>` : ''}
 
     <!-- ── Baal Aadhaar: validity notice (above warning box) ── -->
-    ${ isBaalAadhaar ? `<div class="baal-notice">${ baalNoticeText }</div>` : '' }
+    ${isBaalAadhaar ? `<div class="baal-notice">${baalNoticeText}</div>` : ''}
 
     <!-- ── Warning Box ── -->
     <div class="warning-box">
-      <div class="warning-local">${ selectedWarning.local }</div>
-      <div class="warning-english"><span class="warning-english-bold">${ selectedWarning.english }</span> It should be used with verification (online authentication, or scanning of QR code / offline XML).</div>
+      <div class="warning-local">${selectedWarning.local}</div>
+      <div class="warning-english"><span class="warning-english-bold">${selectedWarning.english}</span> It should be used with verification (online authentication, or scanning of QR code / offline XML).</div>
     </div>
 
     <!-- ── Aadhaar Number ── -->
     <div class="aadhaar-number-block">
-      <div class="aadhaar-num-text">${ aadhaarNum }</div>
-      ${ vid ? `<div class="vid-num-text">VID: ${vid}</div>` : '' }
+      <div class="aadhaar-num-text">${aadhaarNum}</div>
+      ${vid ? `<div class="vid-num-text">VID: ${vid}</div>` : ''}
     </div>
 
     <!-- ── Baal Aadhaar: right-edge vertical strip ── -->
-    ${ isBaalAadhaar ? `<div class="baal-strip">${ baalStripText }</div>` : '' }
+    ${isBaalAadhaar ? `<div class="baal-strip">${baalStripText}</div>` : ''}
 
     <!-- ── Bottom Slogan ── -->
-    <div class="slogan-container">${ formattedSlogan }</div>
+    <div class="slogan-container">${formattedSlogan}</div>
   </div>
 
   <!--BACK CARD-->
   <div class="card-container" id="card-back">
 
     <!-- ── Heading overlays on tricolor strokes ── -->
-    <div class="card-heading-line1">${ backH.line1 }</div>
-    <div class="card-heading-line2">${ backH.line2 }</div>
+    <div class="card-heading-line1">${backH.line1}</div>
+    <div class="card-heading-line2">${backH.line2}</div>
 
     <!-- ── Logo Text Overlay ── -->
-    <div class="logo-text-overlay">${ logoText }</div>
+    <div class="logo-text-overlay">${logoText}</div>
 
     <!-- ── Left rotated strip ── -->
-    <div class="left-strip">Details As On: ${ detailsAsOn }</div>
+    <div class="left-strip">Details As On: ${detailsAsOn}</div>
 
     <!-- ── Address block: local language label + text ── -->
-    <div class="local-address-label">${ displayLocalAddressLabel }</div>
-    <div class="local-address">${ displayLocalAddress }</div>
+    <div class="local-address-label">${displayLocalAddressLabel}</div>
+    <div class="local-address">${(displayLocalAddress || '').replace(/^(સરનામું|સરનામુ|પત્તા|पता)\s*:\s*/gi, '')}</div>
 
-    ${ renderEnglishAddress && hasLocalLanguage ? `
+    ${renderEnglishAddress && hasLocalLanguage ? `
       <div class="english-address-label">Address:</div>
-      <div class="english-address">${ address }</div>
-    ` : '' }
+      <div class="english-address">${address}</div>
+    ` : ''}
 
     <!-- ── QR Code ── -->
     <div class="qr-container">
-      ${ qrSrc ? `<img src="${qrSrc}" class="qr-img" />` : '' }
+      ${qrSrc ? `<img src="${qrSrc}" class="qr-img" />` : ''}
     </div>
 
     <!-- ── Aadhaar Number ── -->
     <div class="aadhaar-number-block">
-      <div class="aadhaar-num-text">${ aadhaarNum }</div>
-      ${ vid ? `<div class="vid-num-text">VID: ${vid}</div>` : '' }
+      <div class="aadhaar-num-text">${aadhaarNum}</div>
+      ${vid ? `<div class="vid-num-text">VID: ${vid}</div>` : ''}
     </div>
 
-    <!-- ── UIDAI Contact Info ── -->
+    <!-- ── UIDAI Contact Info (Baal Aadhaar only; Adult Aadhaar template has built-in footer) ── -->
+    ${isBaalAadhaar ? `
     <div class="uidai-contact">
       <div class="uidai-contact-item">
         <span class="uidai-contact-icon">&#128222;</span>
@@ -1543,6 +1696,7 @@ function generateAadhaarPVCHTML(params: any): string {
         <span>help@uidai.gov.in</span>
       </div>
     </div>
+    ` : ''}
   </div>
 
 </body>
@@ -1617,33 +1771,33 @@ const AYUSHMAN_LABELS: Record<string, {
 };
 
 function generateAyushmanPVCHTML(params: any): string {
-  const backCardBase64  = params.backCardBase64  || '';
-  const backQrBase64    = params.backQrBase64    || '';
-  const photoBase64     = params.photoBase64     || '';
-  const qrBase64        = params.qrBase64        || '';
-  const name            = (params.name           || '').toUpperCase();
-  const dob             = params.dob             || '';
-  const gender          = (params.gender         || '').toUpperCase();
-  const village         = params.village         || '';
-  const subdivision     = params.subdivision     || '';
-  const district        = (params.district       || '').toUpperCase();
-  const state           = (params.state          || '').toUpperCase();
-  const mobile          = params.mobile          || '';
-  const pmjayId         = params.documentNumber  || params.pmjayId || '';
-  const abhaNumber      = params.vid             || params.abhaNumber || '';
-  const rationId        = params.rationId        || '';
-  const localFontReg    = params.localFontReg    || '';
-  const localFontBold   = params.localFontBold   || '';
-  const isOldLayout     = !!params.isOldLayout;
-  const labels          = params.labels          || {};
+  const backCardBase64 = params.backCardBase64 || '';
+  const backQrBase64 = params.backQrBase64 || '';
+  const photoBase64 = params.photoBase64 || '';
+  const qrBase64 = params.qrBase64 || '';
+  const name = (params.name || '').toUpperCase();
+  const dob = params.dob || '';
+  const gender = (params.gender || '').toUpperCase();
+  const village = params.village || '';
+  const subdivision = params.subdivision || '';
+  const district = (params.district || '').toUpperCase();
+  const state = (params.state || '').toUpperCase();
+  const mobile = params.mobile || '';
+  const pmjayId = params.documentNumber || params.pmjayId || '';
+  const abhaNumber = params.vid || params.abhaNumber || '';
+  const rationId = params.rationId || '';
+  const localFontReg = params.localFontReg || '';
+  const localFontBold = params.localFontBold || '';
+  const isOldLayout = !!params.isOldLayout;
+  const labels = params.labels || {};
 
   const su = state.toUpperCase();
   let cLang = 'english';
   if (su.includes('GUJARAT')) cLang = 'gujarati';
   else if (su.includes('MAHARASHTRA')) cLang = 'marathi';
-  else if (['BIHAR','JHARKHAND','UTTAR PRADESH','MADHYA PRADESH','RAJASTHAN',
-             'HARYANA','UTTARAKHAND','HIMACHAL','CHHATTISGARH','DELHI','PUNJAB']
-             .some(x => su.includes(x))) cLang = 'hindi';
+  else if (['BIHAR', 'JHARKHAND', 'UTTAR PRADESH', 'MADHYA PRADESH', 'RAJASTHAN',
+    'HARYANA', 'UTTARAKHAND', 'HIMACHAL', 'CHHATTISGARH', 'DELHI', 'PUNJAB']
+    .some(x => su.includes(x))) cLang = 'hindi';
   else if (su.includes('TELANGANA') || su.includes('ANDHRA')) cLang = 'telugu';
   else if (su.includes('KARNATAKA')) cLang = 'kannada';
   else if (su.includes('TAMIL')) cLang = 'tamil';
@@ -1651,14 +1805,14 @@ function generateAyushmanPVCHTML(params: any): string {
 
   type LD = { title: string; l1: string; l2: string; footL: string; stLbl: string };
   const LANG: Record<string, LD> = {
-    gujarati: { title:'આયુષ્માન કાર્ડ',  l1:'₹ ૫ લાખ સુધીની', l2:'મફત સારવાર',       footL:'આયુષ્માન ભારત પ્રધાનમંત્રી જન આરોગ્ય યોજના', stLbl:'રાજ્ય' },
-    hindi:    { title:'आयुष्मान कार्ड',   l1:'₹ 5 लाख तक',       l2:'मुफ्त इलाज',       footL:'आयुष्मान भारत प्रधानमंत्री जन आरोग्य योजना',  stLbl:'राज्य' },
-    marathi:  { title:'आयुष्मान कार्ड',   l1:'₹ 5 लाख पर्यंत',   l2:'मोफत उपचार',       footL:'आयुष्मान भारत प्रधानमंत्री जन आरोग्य योजना',  stLbl:'राज्य' },
-    telugu:   { title:'ఆయుష్మాన్ కార్డ్', l1:'₹5 లక్షల వరకు',   l2:'ఉచిత చికిత్స',     footL:'ఆయుష్మాన్ భారత్ ప్రధానమంత్రి జన్ ఆరోగ్య యోజన', stLbl:'రాష్ట్రం' },
-    kannada:  { title:'ಆಯುಷ್ಮಾನ್ ಕಾರ್ಡ್', l1:'₹5 ಲಕ್ಷದ ವರೆಗೆ', l2:'ಉಚಿತ ಚಿಕಿತ್ಸೆ',    footL:'ಆಯುಷ್ಮಾನ್ ಭಾರತ್ ಪ್ರಧಾನ ಮಂತ್ರಿ ಜನ ಆರೋಗ್ಯ ಯೋಜನೆ', stLbl:'ರಾಜ್ಯ' },
-    tamil:    { title:'ஆயுஷ்மான் கார்டு',  l1:'₹5 இலட்சம் வரை', l2:'இலவச சிகிச்சை',   footL:'ஆயுஷ்மான் பாரத் பிரதம மந்திரி ஜன் ஆரோக்கிய யோஜனா', stLbl:'மாநிலம்' },
-    bengali:  { title:'আয়ুষ্মান কার্ড',   l1:'₹5 লক্ষ পর্যন্ত', l2:'বিনামূল্যে চিকিৎসা', footL:'আয়ুষ্মান ভারত প্রধানমন্ত্রী জন আরোগ্য যোজনা', stLbl:'রাজ্য' },
-    english:  { title:'AYUSHMAN CARD',      l1:'Up to ₹5 Lakh',  l2:'Free Treatment',    footL:'AYUSHMAN BHARAT PRADHAN MANTRI JAN AROGYA YOJANA',   stLbl:'State' },
+    gujarati: { title: 'આયુષ્માન કાર્ડ', l1: '₹ ૫ લાખ સુધીની', l2: 'મફત સારવાર', footL: 'આયુષ્માન ભારત પ્રધાનમંત્રી જન આરોગ્ય યોજના', stLbl: 'રાજ્ય' },
+    hindi: { title: 'आयुष्मान कार्ड', l1: '₹ 5 लाख तक', l2: 'मुफ्त इलाज', footL: 'आयुष्मान भारत प्रधानमंत्री जन आरोग्य योजना', stLbl: 'राज्य' },
+    marathi: { title: 'आयुष्मान कार्ड', l1: '₹ 5 लाख पर्यंत', l2: 'मोफत उपचार', footL: 'आयुष्मान भारत प्रधानमंत्री जन आरोग्य योजना', stLbl: 'राज्य' },
+    telugu: { title: 'ఆయుష్మాన్ కార్డ్', l1: '₹5 లక్షల వరకు', l2: 'ఉచిత చికిత్స', footL: 'ఆయుష్మాన్ భారత్ ప్రధానమంత్రి జన్ ఆరోగ్య యోజన', stLbl: 'రాష్ట్రం' },
+    kannada: { title: 'ಆಯುಷ್ಮಾನ್ ಕಾರ್ಡ್', l1: '₹5 ಲಕ್ಷದ ವರೆಗೆ', l2: 'ಉಚಿತ ಚಿಕಿತ್ಸೆ', footL: 'ಆಯುಷ್ಮಾನ್ ಭಾರತ್ ಪ್ರಧಾನ ಮಂತ್ರಿ ಜನ ಆರೋಗ್ಯ ಯೋಜನೆ', stLbl: 'ರಾಜ್ಯ' },
+    tamil: { title: 'ஆயுஷ்மான் கார்டு', l1: '₹5 இலட்சம் வரை', l2: 'இலவச சிகிச்சை', footL: 'ஆயுஷ்மான் பாரத் பிரதம மந்திரி ஜன் ஆரோக்கிய யோஜனா', stLbl: 'மாநிலம்' },
+    bengali: { title: 'আয়ুষ্মান কার্ড', l1: '₹5 লক্ষ পর্যন্ত', l2: 'বিনামূল্যে চিকিৎসা', footL: 'আয়ুষ্মান ভারত প্রধানমন্ত্রী জন আরোগ্য যোজনা', stLbl: 'রাজ্য' },
+    english: { title: 'AYUSHMAN CARD', l1: 'Up to ₹5 Lakh', l2: 'Free Treatment', footL: 'AYUSHMAN BHARAT PRADHAN MANTRI JAN AROGYA YOJANA', stLbl: 'State' },
   };
   const ld: LD = LANG[cLang] || LANG.english;
 
@@ -1856,7 +2010,7 @@ function generateAyushmanPVCHTML(params: any): string {
     const path = require('path');
     const publicTemplate = path.join(process.cwd(), 'public', 'templates', 'ayushman', 'ayushman-front-blank.png');
     const newTemplateUpload = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\5e023e96-6664-481b-9be3-9ed4b4f32bd6\\media__1783605292767.png";
-    
+
     // Check if the public folder exists, if not create it
     const publicDir = path.dirname(publicTemplate);
     if (!fs.existsSync(publicDir)) {
@@ -1873,7 +2027,7 @@ function generateAyushmanPVCHTML(params: any): string {
       const base64 = fs.readFileSync(publicTemplate).toString('base64');
       frontCardBg = `url('data:image/png;base64,${base64}')`;
     }
-  } catch(e) {}
+  } catch (e) { }
 
   // ── FINAL HTML TEMPLATE ───────────────────────────────────────
   return `<!DOCTYPE html>
@@ -2282,21 +2436,21 @@ function generateAyushmanPVCHTML(params: any): string {
     /* Typography Defaults */
     .field-label {
       font-family: 'NotoSansCustom-Bold', Arial, sans-serif;
-      font-size: 22px;
+      font-size: 23px;
       font-weight: 700;
       color: #C96A18;
       white-space: nowrap;
       margin-right: 8px;
-      line-height: 30px;
+      line-height: 32px;
     }
     .field-value {
       font-family: 'NotoSansCustom-Bold', Arial, sans-serif;
-      font-size: 24px;
+      font-size: 27px;
       font-weight: 700;
       color: #111111;
       white-space: nowrap;
       text-rendering: optimizeLegibility;
-      line-height: 30px;
+      line-height: 32px;
     }
     
     .field-row {
@@ -2370,8 +2524,8 @@ function generateAyushmanPVCHTML(params: any): string {
     <div class="qr-container">
       ${qrBase64 ? `<img src="${qrBase64}" class="qr-img" alt="QR"/>` : ''}
       <div class="state-blk">
-        <div class="sl">${ld.stLbl}: ${state.charAt(0)+state.slice(1).toLowerCase()}</div>
-        <div class="se">State: ${state}</div>
+        <div class="sl">${ld.stLbl}: ${state ? state.charAt(0).toUpperCase() + state.slice(1).toLowerCase() : ''}</div>
+        ${ld.stLbl.toLowerCase() !== 'state' ? `<div class="se">State: ${state}</div>` : ''}
       </div>
     </div>
 
@@ -2606,6 +2760,50 @@ function generateAbhaPVCHTML(params: any): string {
 }
 
 function generatePanPVCHTML(params: any): string {
+  const frontCardSrc = params.frontCardBase64 || '';
+  const backCardSrc = params.backCardBase64 || '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { margin: 0; padding: 0; background: #ffffff; }
+
+    .card-container {
+      width: 1013px;
+      height: 638px;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+
+    .card-img {
+      width: 1013px;
+      height: 638px;
+      object-fit: fill;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- FRONT CARD -->
+  <div class="card-container" id="card-front">
+    <img src="${frontCardSrc}" class="card-img" />
+  </div>
+
+  <!-- BACK CARD -->
+  <div class="card-container" id="card-back">
+    <img src="${backCardSrc}" class="card-img" />
+  </div>
+
+</body>
+</html>`;
+}
+
+function generateCroppedEshramPVCHTML(params: any): string {
   const frontCardSrc = params.frontCardBase64 || '';
   const backCardSrc = params.backCardBase64 || '';
 
@@ -2886,6 +3084,7 @@ function generateEshramPVCHTML(params: any): string {
 </html>`;
 }
 
+// ── STRICTLY FROZEN: DO NOT EDIT THIS VOTER PVC CARD FUNCTION ──
 function generateCroppedVoterPVCHTML(params: any): string {
   const frontCardSrc = params.frontCardBase64 || '';
   const backCardSrc = params.backCardBase64 || '';
@@ -2914,7 +3113,7 @@ function generateCroppedVoterPVCHTML(params: any): string {
     .card-img {
       width: 100%;
       height: 100%;
-      object-fit: contain;
+      object-fit: fill;
       display: block;
     }
   </style>

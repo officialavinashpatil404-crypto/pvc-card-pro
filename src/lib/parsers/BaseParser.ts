@@ -25,6 +25,7 @@ export interface ExtractedDocumentData {
   backCardBase64?: string | null;
   textSource?: string;
   languageSource?: string;
+  lang?: string;
   fatherName?: string | null;
   fatherNameLocal?: string | null;
   assemblyConstituency?: string | null;

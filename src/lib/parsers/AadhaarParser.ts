@@ -95,13 +95,68 @@ export class AadhaarParser extends BaseParser {
     }
   }
 
+  private extractCoName(): { english: string | null; local: string | null } {
+    const lines = this.rawText.split('\n').map(l => l.trim());
+    let englishCo: string | null = null;
+    let localCo: string | null = null;
+
+    const coRegex = /(?:C\/O|W\/O|S\/O|D\/O|H\/O|F\/O|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|Husband\s+of|Father\s+of)\s*[:/,-]?\s*([A-Za-z\s.]+)/i;
+    const match = this.rawText.match(coRegex);
+    if (match && match[1].trim().length >= 2) {
+      englishCo = match[1].trim().replace(/^[,\s:\-]+/, '').replace(/[,\s:\-]+$/, '');
+    }
+
+    if (!englishCo) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (/^(?:C\/O|W\/O|S\/O|D\/O|H\/O|F\/O|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|CO|WO|SO|DO)[:\s,-]*$/i.test(lines[i])) {
+          const nextLine = lines[i + 1];
+          if (/^[A-Za-z\s.]+$/.test(nextLine) && nextLine.length >= 2) {
+            englishCo = nextLine.replace(/^[,\s:\-]+/, '').replace(/[,\s:\-]+$/, '');
+            break;
+          }
+        }
+      }
+    }
+
+    const localCoRegex = /(?:દ્વારા|द्वारा|પિતા|પતિ|આત્મજ|સુપુત્ર|સુપુત્રી|કેર\s+ઓફ|મારફતે)\s*[:/,-]?\s*([^\nA-Za-z0-9,.:\-/]+)/i;
+    const localMatch = this.rawText.match(localCoRegex);
+    if (localMatch && localMatch[1].trim().length >= 2) {
+      localCo = localMatch[1].trim().replace(/^[,\s:\-]+/, '').replace(/[,\s:\-]+$/, '');
+    }
+
+    if (!localCo) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        if (/^(?:દ્વારા|द्वारा|પિતા|પતિ|આત્મજ|કેર\s+ઓફ|મારફતે)[:\s,-]*$/i.test(lines[i])) {
+          const nextLine = lines[i + 1];
+          if (/[^\x00-\x7F]/.test(nextLine) && nextLine.length >= 2) {
+            localCo = nextLine.replace(/^[,\s:\-]+/, '').replace(/[,\s:\-]+$/, '');
+            break;
+          }
+        }
+      }
+    }
+
+    return { english: englishCo, local: localCo };
+  }
+
   extractName(): string | null {
     console.log('[AadhaarParser] Running Name extraction rules');
+    const coData = this.extractCoName();
+    if (coData.english) console.log(`[AadhaarParser] Detected C/O name to filter: "${coData.english}"`);
     
+    const isCoName = (text: string): boolean => {
+      if (!text) return false;
+      const t = text.trim().toLowerCase();
+      if (!coData.english) return false;
+      const co = coData.english.trim().toLowerCase();
+      if (!co) return false;
+      return t === co;
+    };
+
     // ── PRIORITY 0: QR Code name (most accurate — direct from UIDAI) ──
     if (this.qrData && this.qrData.name) {
       const qrName = this.qrData.name.trim();
-      if (qrName.length >= 2 && !/\d/.test(qrName)) {
+      if (qrName.length >= 2 && !/\d/.test(qrName) && !isCoName(qrName)) {
         console.log(`[AadhaarParser] Name found via QR code attributes: ${qrName}`);
         return qrName;
       }
@@ -111,40 +166,47 @@ export class AadhaarParser extends BaseParser {
       .map(line => line.trim())
       .filter(line => line.length > 0);
 
-    const noiseKeywords = [
-      'enrolment', 'enrollment', 'phone', 'mobile', 'email', 'unique', 'authority', 
-      'government', 'india', 'government of india', 'address', 'signature', 'date',
-      'year of birth', 'yob', 'dob', 'male', 'female', 'transgender', 'information',
-      'download', 'generation', 'help', 'valid', 'identity', 'aadhaar', 'virtual', 'vid'
-    ];
-
     const isNoise = (text: string): boolean => {
-      const lower = text.toLowerCase();
-      return noiseKeywords.some(kw => lower.includes(kw)) || /\d/.test(text);
+      const trimmed = text.trim();
+      const lower = trimmed.toLowerCase();
+      if (lower === 'to' || lower === 'to,' || lower === 'to:' || lower === 'from' || lower === 'from:') return true;
+      if (/\d/.test(trimmed)) return true;
+
+      // Exact word boundary regex: matches standalone labels (like 'vid', 'dob', 'po', 'vtc') without breaking names like 'Vidhi'
+      const noiseWordRegex = /\b(?:enrolment|enrollment|phone|mobile|email|unique|authority|government|india|address|signature|date|dob|yob|y\.o\.b\.|d\.o\.b\.|male|female|transgender|information|download|generation|help|valid|identity|aadhaar|virtual|vid|details|issue|vtc|po|district|dist|state|pin|code|pincode|city|village|taluka|tehsil|nagar|park|road|street|society|colony|house|plot|sector|block|building|floor|flat|near|behind|opposite|lane|marg|chawk|bazar|bazaar|gali|mohalla|post|thana)\b/i;
+
+      return noiseWordRegex.test(trimmed);
     };
 
-    // Strict guard: MUST NOT be a relationship line (W/O, S/O, D/O, C/O, Husband of, Wife of, Care of, etc.)
-    const isRelationshipLine = (text: string): boolean => {
-      return /^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|Husband\s+of|Father\s+of|CO|WO|SO|DO)\b/i.test(text.trim());
+    // Strict guard: MUST NOT be a relationship line or follow a C/O line
+    const isRelationshipLine = (text: string, prevText?: string): boolean => {
+      const trimmed = text.trim();
+      const isRel = /^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|Husband\s+of|Father\s+of|CO|WO|SO|DO)\b/i.test(trimmed);
+      if (isRel) return true;
+      if (prevText && /^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|Husband\s+of|Father\s+of|CO|WO|SO|DO)[:\s,-]*$/i.test(prevText.trim())) {
+        return true;
+      }
+      return false;
     };
 
     const isEnglish = (text: string): boolean => {
-      // Check if it contains mainly English letters, spaces, and dots
       return /^[A-Za-z\s\.]+$/.test(text);
     };
 
     // Find address section boundary so we NEVER parse names from the back card address block
-    const addressLineIdx = lines.findIndex(l => /^Address\s*[:/]/i.test(l) || /^पता\s*[:/]/i.test(l) || /^(સરનામું|முகவரி|చిరునామా|విಳಾಸ|മേൽവിലാസം|ঠিকানা|ଠିକଣା|ਪਤਾ)\s*[:/]/i.test(l));
+    const addressLineIdx = lines.findIndex(l => /^Address\s*[:/]/i.test(l) || /^पता\s*[:/]/i.test(l) || /^(સરનામું|મુગવરી|చిరునామా|విళાસ|മേൽവിലാസം|ঠিকানা|ଠିକଣା|ਪਤਾ)\s*[:/]/i.test(l));
     const searchLimit = addressLineIdx > 0 ? addressLineIdx : lines.length;
 
-    // Heuristic 1: Find line after 'To' or 'To,' (before address)
+    // Heuristic 1 (TOP PRIORITY): Find line after 'To' or 'To,' (in top letter block)
+    // In e-Aadhaar PDFs, 'To' is followed directly by Local Name and English Name!
     for (let i = 0; i < searchLimit - 1; i++) {
-      if (/^to\b,?/i.test(lines[i])) {
-        for (let offset = 1; offset <= 2; offset++) {
+      if (/^to\b[:,]?/i.test(lines[i])) {
+        for (let offset = 1; offset <= 3; offset++) {
           const candidateIndex = i + offset;
           if (candidateIndex < searchLimit) {
-            const candidate = lines[candidateIndex];
-            if (candidate && isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
+            const candidate = lines[candidateIndex].trim();
+            const prevCandidate = candidateIndex > 0 ? lines[candidateIndex - 1] : undefined;
+            if (candidate && isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate, prevCandidate) && !isCoName(candidate) && candidate.length >= 2 && candidate.toLowerCase() !== 'to') {
               console.log(`[AadhaarParser] Name found via 'To' block: ${candidate}`);
               return candidate;
             }
@@ -153,26 +215,15 @@ export class AadhaarParser extends BaseParser {
       }
     }
 
-    // Heuristic 2: Find Name labels: "Name / नाम : <Name>" or "Name: <Name>"
-    const nameLabelRegex = /(?:Name|नाम)\s*[\/|:|:\-]*\s*([A-Za-z\s\.]+)/i;
-    const labelMatch = this.rawText.match(nameLabelRegex);
-    if (labelMatch) {
-      const candidate = labelMatch[1].trim();
-      if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
-        console.log(`[AadhaarParser] Name found via label: ${candidate}`);
-        return candidate;
-      }
-    }
-
-    // Heuristic 3: Look ABOVE DOB/Birth lines (before address)
+    // Heuristic 2: Look ABOVE DOB/Birth lines (front card cutout)
     for (let i = 0; i < searchLimit; i++) {
-      if (/(?:DOB|Year\s*of\s*Birth|YOB|जन्म\s*तिथि|जन्म\s*वर्ष)/i.test(lines[i])) {
-        // Look up to 3 lines above
+      if (/(?:DOB|Year\s*of\s*Birth|YOB|जन्म\s*तिथि|જન્મ\s*તારીખ)/i.test(lines[i])) {
         for (let offset = 1; offset <= 3; offset++) {
           const candidateIndex = i - offset;
           if (candidateIndex >= 0) {
             const candidate = lines[candidateIndex];
-            if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
+            const prevCandidate = candidateIndex > 0 ? lines[candidateIndex - 1] : undefined;
+            if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate, prevCandidate) && !isCoName(candidate) && candidate.length >= 2) {
               console.log(`[AadhaarParser] Name found above DOB block: ${candidate}`);
               return candidate;
             }
@@ -181,10 +232,22 @@ export class AadhaarParser extends BaseParser {
       }
     }
 
+    // Heuristic 3: Find Name labels: "Name / नाम : <Name>" or "Name: <Name>"
+    const nameLabelRegex = /(?:Name|नाम)\s*[\/|:|:\-]*\s*([A-Za-z\s\.]+)/i;
+    const labelMatch = this.rawText.match(nameLabelRegex);
+    if (labelMatch) {
+      const candidate = labelMatch[1].trim();
+      if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && !isCoName(candidate) && candidate.length >= 2) {
+        console.log(`[AadhaarParser] Name found via label: ${candidate}`);
+        return candidate;
+      }
+    }
+
     // Heuristic 4: Scan all lines before address block for the first clean English title-case name
     for (let i = 0; i < searchLimit; i++) {
       const candidate = lines[i];
-      if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
+      const prevCandidate = i > 0 ? lines[i - 1] : undefined;
+      if (isEnglish(candidate) && !isNoise(candidate) && !isRelationshipLine(candidate, prevCandidate) && !isCoName(candidate) && candidate.length >= 2) {
         if (/^[A-Z][A-Za-z\s\.]+$/.test(candidate) && !candidate.toLowerCase().startsWith('to')) {
           console.log(`[AadhaarParser] Name found via pre-address scan: ${candidate}`);
           return candidate;
@@ -197,7 +260,7 @@ export class AadhaarParser extends BaseParser {
     const genericNameMatch = preAddressText.match(/\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\b/g);
     if (genericNameMatch) {
       for (const candidate of genericNameMatch) {
-        if (!isNoise(candidate) && !isRelationshipLine(candidate) && candidate.length >= 2) {
+        if (!isNoise(candidate) && !isRelationshipLine(candidate) && !isCoName(candidate) && candidate.length >= 2) {
           console.log(`[AadhaarParser] Name found via fallback generic regex: ${candidate}`);
           return candidate;
         }
@@ -667,14 +730,69 @@ export class AadhaarParser extends BaseParser {
     return this.extractedQR;
   }
 
+  /**
+   * Returns true if the PDF text has significant local-language (Indic script) content
+   * beyond the standard government headers printed on ALL Aadhaar cards.
+   * Threshold: ≥30 Devanagari chars (Hindi/Marathi body text) OR ≥10 of any other regional script.
+   * Standard headers like "भारत सरकार" (~8 chars) and "भारतीय विशिष्ट पहचान प्राधिकरण" (~20 more)
+   * are present on every card — we require substantially more to confirm real local content.
+   */
+  private hasSignificantLocalContent(): boolean {
+    const text = this.rawText;
+    let devanagariCount = 0;
+    let regionalCount = 0;
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      if (code >= 0x0900 && code <= 0x097F) devanagariCount++;
+      else if (
+        (code >= 0x0A80 && code <= 0x0AFF) || // Gujarati
+        (code >= 0x0B80 && code <= 0x0BFF) || // Tamil
+        (code >= 0x0C00 && code <= 0x0C7F) || // Telugu
+        (code >= 0x0C80 && code <= 0x0CFF) || // Kannada
+        (code >= 0x0D00 && code <= 0x0D7F) || // Malayalam
+        (code >= 0x0980 && code <= 0x09FF) || // Bengali
+        (code >= 0x0A00 && code <= 0x0A7F) || // Punjabi
+        (code >= 0x0B00 && code <= 0x0B7F)    // Odia
+      ) regionalCount++;
+    }
+    // Require substantial local language text beyond the common government headers.
+    // ALL Aadhaar cards (even English-only) contain ~80-120 Devanagari chars from
+    // standard Hindi template text (भारत सरकार, UIDAI name, warning text, address label).
+    // Real Hindi/Marathi local content adds 200+ chars; we require ≥150 to be safe.
+    // Regional scripts (Gujarati, Tamil, etc.) are NOT present on English-only cards,
+    // so a threshold of 30 chars is sufficient for those.
+    if (devanagariCount >= 150) return true;
+    if (regionalCount >= 30) return true;
+    return false;
+  }
+
   extractLocalName(): string | null {
     console.log('[AadhaarParser] Running Local Name extraction rules');
+
+    // ── GUARD: Skip local name extraction entirely for English-only PDFs ──
+    // QR codes always contain lname, but we only display it if the PDF itself
+    // has meaningful Indic script text (not just standard government headers).
+    if (!this.hasSignificantLocalContent()) {
+      console.log('[AadhaarParser] Skipping local name — PDF has no significant Indic script content (English-only card)');
+      return null;
+    }
+
+    const coData = this.extractCoName();
+    if (coData.local) console.log(`[AadhaarParser] Detected local C/O name to filter: "${coData.local}"`);
+
+    const isCoLocalName = (text: string): boolean => {
+      if (!text) return false;
+      const t = text.trim();
+      if (coData.local && t === coData.local.trim()) return true;
+      if (coData.english && t.toLowerCase() === coData.english.trim().toLowerCase()) return true;
+      return false;
+    };
 
     // ── PRIORITY 1: QR Code lname field (most accurate — direct from UIDAI) ──
     if (this.qrData) {
       // UIDAI QR XML may have 'lname' (local name) attribute
       const qrLocalName = this.qrData.lname || this.qrData.ln || this.qrData.local_name || null;
-      if (qrLocalName && /[^\x00-\x7F]/.test(qrLocalName)) {
+      if (qrLocalName && /[^\x00-\x7F]/.test(qrLocalName) && !isCoLocalName(qrLocalName)) {
         console.log(`[AadhaarParser] Local Name from QR lname field: ${qrLocalName}`);
         return this.normalizeIndicText(qrLocalName);
       }
@@ -692,10 +810,15 @@ export class AadhaarParser extends BaseParser {
     const isEnglishOnly = (text: string): boolean => /^[A-Za-z\s\.]+$/.test(text);
     const isNotNumberLine = (text: string): boolean => !/^[\d\s\-]+$/.test(text);
     const isNotAddrKeyword = (text: string): boolean =>
-      !/(Address|पता|સરનામું|સરનામુ|முகவரி|చిరునామా|విళಾಸ|മേൽവിലാസം|ঠিকানা|ଠିକଣা|ਪਤਾ)/i.test(text);
+      !/^(Address|पता|सरनामूं|સરનામું|સરનામુ|મુગવરી|చిరునామా|విళાસ|മേൽവിലാസം|ঠিকানা|ଠିକଣা|ਪਤਾ|प्रति|પ્રતિ|ਪ੍ਰਤੀ|ప్రతి|ప్రతీ|ప్రతి|ಪ್ರತಿ|প্রতি|ଠାରେ|To|From)[:\s,-]*$/i.test(text.trim()) &&
+      !/(Address|पता|સરનામું|સરનામુ|મુગવરી|చిరునామా|విళાસ|മേൽവിലാസം|ঠিকানা|ଠିକଣা|ਪਤਾ)/i.test(text);
 
-    const isNotRelationship = (text: string): boolean =>
-      !/^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|पति|पिता|आत्मज|पत्नी|સુપુત્ર|સુપુત્રી|કેર\s+ઓફ|પત્ની|આત્મજ|દ્વારા|द्वारा)/i.test(text);
+    const isNotRelationship = (text: string, prevText?: string): boolean => {
+      const trimmed = text.trim();
+      if (/^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|पति|पिता|आत्मज|पत्नी|સુપુત્ર|સુપુત્રી|કેર\s+ઓફ|પત્ની|આત્મજ|દ્વારા|द्वारा|મારફતે)/i.test(trimmed)) return false;
+      if (prevText && /^(?:W\/O|S\/O|D\/O|C\/O|H\/O|F\/O|W\.O\.|S\.O\.|D\.O\.|C\.O\.|Care\s+of|Son\s+of|Wife\s+of|Daughter\s+of|पति|पिता|आत्मज|पत्नी|સુપુત્ર|સુપુત્રી|કેર\s+ઓફ|પત્ની|આત્મજ|દ્વારા|द्वारा|મારફતે)[:\s,-]*$/i.test(prevText.trim())) return false;
+      return true;
+    };
 
     // Find address section boundary so we NEVER parse local names from the back card address block
     const addressLineIdx = lines.findIndex(l => /^Address\s*[:/]/i.test(l) || /^(पता|સરનામું|முகவரி|చిరునామా|విళಾಸ|മേൽവിലാസം|ঠিকানা|ଠିକଣা|ਪਤਾ)\s*[:/]/i.test(l));
@@ -709,7 +832,8 @@ export class AadhaarParser extends BaseParser {
         // Check line above
         if (i > 0) {
           const prevLine = lines[i - 1];
-          if (isNonAscii(prevLine) && prevLine.length >= 2 && isNotNumberLine(prevLine) && isNotAddrKeyword(prevLine) && isNotRelationship(prevLine)) {
+          const beforePrev = i > 1 ? lines[i - 2] : undefined;
+          if (isNonAscii(prevLine) && prevLine.length >= 2 && isNotNumberLine(prevLine) && isNotAddrKeyword(prevLine) && isNotRelationship(prevLine, beforePrev) && !isCoLocalName(prevLine)) {
             console.log(`[AadhaarParser] Local Name found above English name: ${prevLine}`);
             return this.normalizeIndicText(prevLine);
           }
@@ -717,7 +841,7 @@ export class AadhaarParser extends BaseParser {
         // Check line below
         if (i < searchLimit - 1) {
           const nextLine = lines[i + 1];
-          if (isNonAscii(nextLine) && !isEnglishOnly(nextLine) && nextLine.length >= 2 && isNotNumberLine(nextLine) && isNotAddrKeyword(nextLine) && isNotRelationship(nextLine)) {
+          if (isNonAscii(nextLine) && !isEnglishOnly(nextLine) && nextLine.length >= 2 && isNotNumberLine(nextLine) && isNotAddrKeyword(nextLine) && isNotRelationship(nextLine, lines[i]) && !isCoLocalName(nextLine)) {
             console.log(`[AadhaarParser] Local Name found below English name: ${nextLine}`);
             return this.normalizeIndicText(nextLine);
           }
@@ -732,10 +856,7 @@ export class AadhaarParser extends BaseParser {
           const idx = i - offset;
           if (idx >= 0) {
             const candidate = lines[idx];
-            if (isNonAscii(candidate) && candidate.length >= 2
-                && !candidate.match(/\d{4}/)
-                && isNotAddrKeyword(candidate)
-                && isNotRelationship(candidate)) {
+            if (isNonAscii(candidate) && candidate.length >= 2 && !candidate.match(/\d{4}/) && isNotAddrKeyword(candidate) && isNotRelationship(candidate)) {
               console.log(`[AadhaarParser] Local Name found near DOB line: ${candidate}`);
               return this.normalizeIndicText(candidate);
             }
@@ -751,9 +872,13 @@ export class AadhaarParser extends BaseParser {
   extractLocalAddress(): string | null {
     console.log('[AadhaarParser] Running Local Address extraction rules');
 
+    // ── GUARD: Skip local address extraction for English-only PDFs ──
+    if (!this.hasSignificantLocalContent()) {
+      console.log('[AadhaarParser] Skipping local address — PDF has no significant Indic script content (English-only card)');
+      return null;
+    }
+
     // ── PRIORITY 1: QR Code address fields (most accurate — direct from UIDAI) ──
-    // UIDAI QR XML has address parts: co (care of), house, street, lm (landmark), loc, vtc, dist, state, pc
-    // Some QR versions also have 'laddress' or 'address' in local script
     if (this.qrData) {
       const qrLocalAddr = this.qrData.laddress || this.qrData.local_address || null;
       if (qrLocalAddr && /[^\x00-\x7F]/.test(qrLocalAddr) && qrLocalAddr.length > 5) {
@@ -762,24 +887,22 @@ export class AadhaarParser extends BaseParser {
       }
     }
 
-    // All known address labels across Indian languages
+    // All known address labels across Indian languages (including Gujarati care-of/relation prefixes)
     const addrLabelPatterns = [
-      'સરનામું', 'સરનામુ',  // Gujarati
-      'पता', 'पत्ता',        // Hindi/Devanagari
-      'முகவரி',              // Tamil
-      'చిరునామా', 'రునామా',  // Telugu
-      'ವಿಳಾಸ',               // Kannada
-      'മേൽവിലാസം', 'വിലാസം', // Malayalam
-      'ঠিকানা',              // Bengali/Assamese
-      'ঠিকনা',               // Assamese variant
-      'ਪਤਾ',                 // Punjabi
-      'ଠିକଣା',               // Odia
+      'સરનામું', 'સરનામુ', 'સંભાળી', 'કેર ઓફ', 'આત્મજ', 'પોસ્ટ', 'જીલ્લો', 'રહેવાસી', // Gujarati
+      'पता', 'पत्ता', 'देखभाल', 'द्वारा', 'आत्मज', 'पुत्र', 'पत्नी',              // Hindi/Devanagari
+      'முகவரி',                                                                 // Tamil
+      'చిరునామా', 'రునామా',                                                     // Telugu
+      'ವಿಳಾಸ',                                                                  // Kannada
+      'മേൽവിലാസം', 'വിലാസം',                                                    // Malayalam
+      'ঠিকানা', 'ঠিকના',                                                        // Bengali/Assamese
+      'ਪਤਾ',                                                                    // Punjabi
+      'ଠିକଣା',                                                                  // Odia
     ];
 
     const addrPattern = addrLabelPatterns.join('|');
 
     // Try matching local address label followed by content until English "Address"
-    // Handle both "Address:" and "Address :" (with space)
     const localAddrRegex = new RegExp(
       `(${addrPattern})\\s*[:/]?\\s*([\\s\\S]+?)(?=Address\\s*[:/]|$)`,
       'i'
@@ -798,14 +921,14 @@ export class AadhaarParser extends BaseParser {
 
     // Fallback 2: Collect all consecutive non-ASCII lines that appear before the English address block
     const lines = this.rawText.split('\n').map(l => l.trim());
-    const addressLineIdx = lines.findIndex(l => /^Address\s*[:/]/i.test(l));
+    const addressLineIdx = lines.findIndex(l => /Address/i.test(l));
 
     if (addressLineIdx > 0) {
       const localAddrLines: string[] = [];
       for (let i = addressLineIdx - 1; i >= 0; i--) {
         const line = lines[i];
         if (!line) continue;
-        if (/^[A-Za-z0-9 .,\-/]+$/.test(line) && line.length > 3) break;
+        if (/^[A-Za-z0-9 .,\-/]+$/.test(line) && line.length > 3 && !/[^\x00-\x7F]/.test(line)) break;
         if (/(?:DOB|YOB|MALE|FEMALE|Aadhaar|VID|Virtual)/i.test(line)) break;
         if (/[^\x00-\x7F]/.test(line)) {
           localAddrLines.unshift(line);
@@ -821,6 +944,7 @@ export class AadhaarParser extends BaseParser {
     }
 
     console.log('[AadhaarParser] Local Address extraction failed');
+    return null;
     return null;
   }
 
@@ -851,7 +975,6 @@ export class AadhaarParser extends BaseParser {
       else if (code >= 0x0B00 && code <= 0x0B7F) counts.odia++;
     }
 
-    // Prioritize regional languages over Devanagari (since Devanagari is often present as national language text on regional cards)
     const regionalLangs = ['gujarati', 'tamil', 'telugu', 'kannada', 'malayalam', 'bengali', 'punjabi', 'odia'];
     let bestRegionalLang = '';
     let bestRegionalCount = 0;
@@ -862,7 +985,11 @@ export class AadhaarParser extends BaseParser {
       }
     }
 
-    if (bestRegionalCount > 3) {
+    if (counts.devanagari > bestRegionalCount && counts.devanagari > 5) {
+      return 'devanagari';
+    }
+
+    if (bestRegionalCount > 5) {
       return bestRegionalLang;
     }
 
@@ -875,14 +1002,8 @@ export class AadhaarParser extends BaseParser {
 
   extractLocalAddressLabel(): string | null {
     console.log('[AadhaarParser] Running Local Address Label extraction');
-    const localAddrRegex = /(સરનામું|पता|पत्ता|முகவரி|చిరునామా|ವಿಳಾಸ|മേൽவിലാസം|ঠিকানা|ଠିକଣା|ਪਤਾ)\s*[:/]\s*([\s\S]+?)(?=Address:)/i;
-    const match = this.rawText.match(localAddrRegex);
-    if (match) {
-      return match[1].trim() + ' :';
-    }
-    
-    // Fallback: construct it from detected language template
     const lang = this.detectLanguage();
+    if (lang === 'english') return 'Address:';
     const mapping = LANGUAGE_MAP[lang] || LANGUAGE_MAP.english;
     return mapping.addressLabel;
   }
@@ -988,102 +1109,35 @@ export class AadhaarParser extends BaseParser {
     if (!text) return '';
     let normalized = text.replace(/\u0000/g, '');
 
-    // 1. Strip invisible control characters (ZWJ, ZWNJ, BOM, ZWS) that break matching
+    // 1. Strip invisible control characters (ZWJ, ZWNJ, BOM, ZWS)
     normalized = normalized.replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PDFJS GUJARATI/INDIC CORRUPTION HEALING
-    // pdfjs-dist extracts Indic text with well-known corruption patterns because
-    // PDFs store glyphs in visual (painting) order while Unicode requires logical
-    // order. The 6 passes below heal all common patterns.
-    // ─────────────────────────────────────────────────────────────────────────
-
-    // All Indic script Unicode ranges (combined into one character class string)
-    // Covers: Devanagari, Bengali, Gurmukhi, Gujarati, Odia, Tamil, Telugu, Kannada, Malayalam
-    const INDIC_BASE     = '\u0900-\u0D7F';  // All main Indic blocks
-    const GU_BASE        = '\u0A95-\u0AB9';  // Gujarati consonants
-    const GU_MATRA       = '\u0A80-\u0AFF';  // Entire Gujarati block
-    const ALL_VIRAMA     = '\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D'; // Halants
-    const ALL_COMBINING  =
-      // Devanagari combining
+    const INDIC_BASE = '\u0900-\u0D7F';
+    const ALL_VIRAMA = '\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D';
+    const ALL_COMBINING =
       '\u0900-\u0903\u093C\u093E-\u094D\u0945-\u0948\u094E\u094F\u0951-\u0954' +
-      // Bengali
       '\u0981-\u0983\u09BC\u09BE-\u09CD\u09D7' +
-      // Gurmukhi
       '\u0A01-\u0A03\u0A3C\u0A3E-\u0A4D\u0A51\u0A70\u0A71\u0A75' +
-      // Gujarati
       '\u0A81-\u0A83\u0ABC\u0ABE-\u0ACD\u0AE2\u0AE3' +
-      // Odia
       '\u0B01-\u0B03\u0B3C\u0B3E-\u0B4D\u0B56\u0B57\u0B62\u0B63' +
-      // Tamil
       '\u0B82\u0BBE-\u0BCD\u0BD7' +
-      // Telugu
       '\u0C00-\u0C03\u0C3E-\u0C4D\u0C55\u0C56\u0C62\u0C63' +
-      // Kannada
       '\u0C80-\u0C83\u0CBC\u0CBE-\u0CCD\u0CD5\u0CD6\u0CE2\u0CE3' +
-      // Malayalam
       '\u0D00-\u0D03\u0D3B\u0D3C\u0D3E-\u0D4D\u0D57\u0D62\u0D63';
 
-    // PASS 2: Remove stray space AFTER any virama/halant (before the conjunct consonant)
-    // e.g. "ક ્ ર" → "ક્ર" (pdfjs inserts space after halant glyph)
+    // Remove stray space AFTER virama/halant before conjunct consonant (e.g. "ક ્ ર" -> "ક્ર")
     normalized = normalized.replace(
       new RegExp(`([${ALL_VIRAMA}])\\s+(?=[${INDIC_BASE}])`, 'gu'),
       '$1'
     );
 
-    // PASS 3: Remove stray space BEFORE any combining matra/vowel sign
-    // e.g. "શ િ વ" → "શિવ" (the i-matra should directly follow its consonant)
-    // Only heal if the space is between two Indic characters (avoid word boundary removal)
+    // Remove stray space BEFORE combining matra/vowel sign (e.g. "શ િ વ" -> "શિવ")
     normalized = normalized.replace(
       new RegExp(`(?<=[${INDIC_BASE}A-Za-z])\\s([${ALL_COMBINING}])(?=[${INDIC_BASE}A-Za-z,. ])`, 'gu'),
       '$1'
     );
 
-    // PASS 4: Remove stray space AFTER any combining matra (matra is always followed by next consonant)
-    // e.g. "ળ ા " → "ળા" (the aa-matra glyph comes separate from the consonant visual)
-    normalized = normalized.replace(
-      new RegExp(`([${ALL_COMBINING}])\\s+(?=[${INDIC_BASE}])`, 'gu'),
-      '$1'
-    );
-
-    // PASS 5: Gujarati repha (ર્) — pdfjs often extracts repha AFTER the consonant it modifies
-    // In visual order: ◌◌(base consonant)(repha glyph) but Unicode needs (ર)(halant)(base consonant)
-    // Pattern: consonant + repha suffix (ર without halant after) → move repha before consonant
-    // e.g. "હ ષ" with dropped repha → we can't recover it from text alone, but we CAN heal
-    // the case where pdfjs places the repha wrong: "ષ ર ્" → "ર ્ ષ"
-    normalized = normalized.replace(
-      new RegExp(`([${GU_BASE}])\\s*(ર\u0ACD)`, 'gu'),
-      'ર\u0ACD$1'
-    );
-
-    // PASS 6: Also fix Devanagari repha (र्) placed after base consonant
-    normalized = normalized.replace(
-      /([क-ह])(\s*)(र्)/gu,
-      'र्$1'
-    );
-
-    // PASS 7: Re-join any remaining single-character Gujarati fragments that were split by spaces
-    // This handles: "ળ  ા  ઈ" → "ળાઈ" (name endings like "Laxmiben")
-    // Only collapse spaces between Gujarati chars, not between words
-    normalized = normalized.replace(
-      new RegExp(`([${GU_MATRA}])\\s([${GU_MATRA}])`, 'gu'),
-      (match, a, b) => {
-        // If second char is a combining mark, always join
-        const bCode = b.codePointAt(0) || 0;
-        const isCombining = (bCode >= 0x0A81 && bCode <= 0x0ACD) || bCode === 0x0ABC;
-        if (isCombining) return a + b;
-        // If first char is a halant or combining mark, always join
-        const aCode = a.codePointAt(0) || 0;
-        const isHalantOrCombining = (aCode >= 0x0A81 && aCode <= 0x0ACD) || aCode === 0x0ABC;
-        if (isHalantOrCombining) return a + b;
-        return match; // both are base chars — preserve space (word boundary)
-      }
-    );
-
-    // 8. Collapse 2 or more spaces to exactly a single space (cleaned up from earlier passes)
-    normalized = normalized.replace(/\s{2,}/g, ' ');
-
-    return normalized.trim();
+    return normalized.normalize('NFC').replace(/\s{2,}/g, ' ').trim();
   }
 
 
@@ -1098,6 +1152,7 @@ export class AadhaarParser extends BaseParser {
 
     return {
       ...baseData,
+      name: this.extractName(),
       photoError: this.photoError,
       qrError: this.qrError,
       localName: this.extractLocalName(),

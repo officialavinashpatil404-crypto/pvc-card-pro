@@ -10,7 +10,7 @@ import { getDynamicRepairs as getMarathiRepairs, repairMarathiText } from '@/uti
 import { createClient } from '@/utils/supabase/server';
 import { decrypt } from '@/utils/crypto';
 import { cropAadhaarRegions } from '@/lib/utils/pdfRenderer';
-import { translateOrRepairWithAI } from '@/utils/translationEngine';
+import { translateOrRepairWithAI, detectLocalTextErrors } from '@/utils/translationEngine';
 
 // Global cache to store repaired regional language fields to minimize API calls
 const geminiCache = new Map<string, string>();
@@ -72,12 +72,17 @@ function fixGujaratiToDevanagariShift(text: string): string {
 // Smart space healing for concatenated Indic names based on English word structures
 function splitConcatenatedIndicName(repaired: string, englishName: string): string {
   if (!repaired || !englishName) return repaired;
-  let name = repaired.trim();
+  let name = repaired.trim().replace(/\s+/g, ' ');
   const engWords = englishName.trim().split(/\s+/).filter(Boolean);
   if (engWords.length <= 1) return name;
 
-  // 1. First, split before independent vowels if they are in the middle of a word
-  // Devanagari: अ आ इ ई उ ऊ ऋ ए ऐ ओ औ, Gujarati: અ આ ઇ ઈ ઉ ઊ ઋ એ ઐ ઓ ઔ
+  // If word count already matches or exceeds English word count, DO NOT alter internal spaces!
+  let currentTokens = name.split(/\s+/);
+  if (currentTokens.length >= engWords.length) {
+    return name;
+  }
+
+  // 1. Split before independent vowels if they are in the middle of a token
   const independentVowels = /[अआइईउऊऋएऐओऔઅઆઇઈઉઊઋએઐઓઔ]/;
   let newName = '';
   for (let i = 0; i < name.length; i++) {
@@ -89,103 +94,98 @@ function splitConcatenatedIndicName(repaired: string, englishName: string): stri
   }
   name = newName.replace(/\s+/g, ' ').trim();
 
-  // 2. Count current spaces
-  const currentTokens = name.split(/\s+/);
-  if (currentTokens.length === engWords.length) {
+  currentTokens = name.split(/\s+/);
+  if (currentTokens.length >= engWords.length) {
     return name;
   }
 
-  // 3. Proportional split fallback for remaining compound segments
-  if (currentTokens.length < engWords.length) {
-    const resultTokens: string[] = [];
-    let engWordIdx = 0;
-    
-    for (let i = 0; i < currentTokens.length; i++) {
-      const token = currentTokens[i];
-      const tokenLen = [...token].length;
-      
-      const isLastToken = i === currentTokens.length - 1;
-      const numEngWordsForToken = isLastToken 
-        ? engWords.length - engWordIdx 
-        : Math.max(1, Math.round((tokenLen / name.replace(/\s+/g, '').length) * engWords.length));
-      
-      const tokenEngWords = engWords.slice(engWordIdx, engWordIdx + numEngWordsForToken);
-      engWordIdx += numEngWordsForToken;
-      
-      if (tokenEngWords.length <= 1) {
-        resultTokens.push(token);
-      } else {
-        const chars = [...token];
-        const total = chars.length;
-        let offset = 0;
-        const totalEngLen = tokenEngWords.join('').length;
-        
-        for (let j = 0; j < tokenEngWords.length; j++) {
-          const engWord = tokenEngWords[j];
-          const segLen = j < tokenEngWords.length - 1
-            ? Math.round((engWord.length / totalEngLen) * total)
-            : total - offset;
-          resultTokens.push(chars.slice(offset, offset + Math.max(1, segLen)).join(''));
-          offset += Math.max(1, segLen);
+  // 2. Safely split concatenated tokens ONLY at full English word initial boundaries
+  const engToIndicStartMap: Record<string, string[]> = {
+    'r': ['ર', 'र', 'ర', 'ர', 'ರ', 'ര', 'র', 'ਰ', 'ର'],
+    'b': ['ભ', 'બ', 'भ', 'ब', 'భ', 'బ', 'ப', 'ಭ', 'ಬ', 'ഭ', 'ബ', 'ভ', 'ব', 'ਭ', 'ਬ', 'ଭ', 'ବ'],
+    'v': ['વ', 'व', 'వ', 'வ', 'ವ', 'വ', 'ভ', 'ਬ', 'ଵ'],
+    'w': ['વ', 'व', 'వ', 'வ', 'ವ', 'വ'],
+    'p': ['પ', 'प', 'ప', 'ப', 'ಪ', 'പ', 'প', 'ਪ', 'ପ'],
+    'k': ['ક', 'क', 'క', 'க', 'ಕ', 'ക', 'ক', 'ਕ', 'କ'],
+    'n': ['ન', 'न', 'న', 'ன', 'ನ', 'ന', 'ন', 'ਨ', 'ନ'],
+    'm': ['મ', 'म', 'మ', 'ம', 'ಮ', 'മ', 'ম', 'ਮ', 'ମ'],
+    's': ['સ', 'શ', 'ષ', 'स', 'श', 'ष', 'స', 'శ', 'ஸ', 'ஷ', 'സ', 'സ', 'স', 'ਸ', 'ସ'],
+    'h': ['હ', 'ह', 'హ', 'ஹ', 'ಹ', 'ഹ', 'হ', 'ਹ', 'ဟ'],
+    'd': ['દ', 'ધ', 'द', 'ध', 'ద', 'ధ', 'த', 'ದ', 'ಧ', 'ദ', 'ധ', 'দ', 'ਧ', 'ଦ'],
+    'g': ['ગ', 'ग', 'గ', 'க', 'ഗ', 'ഗ', 'গ', 'ਗ', 'ଗ'],
+    'j': ['જ', 'ज', 'జ', 'ஜ', 'ಜ', 'ജ', 'જ', 'ਜ', 'ଜ'],
+    'ch': ['ચ', 'च', 'చ', 'ச', 'ಚ', 'ച', 'চ', 'ਚ', 'ଚ'],
+    'sh': ['શ', 'श', 'శ', 'ష', 'ஸ', 'ಶ', 'ശ', 'শ', 'ਸ਼', 'ଶ']
+  };
+
+  const newTokens: string[] = [];
+  for (let tIdx = 0; tIdx < currentTokens.length; tIdx++) {
+    let token = currentTokens[tIdx];
+
+    if (tIdx < engWords.length - 1 && token.length >= 4) {
+      const nextEngWord = engWords[tIdx + 1].toLowerCase();
+      let startKey = nextEngWord[0];
+      if (nextEngWord.startsWith('sh') || nextEngWord.startsWith('ch')) {
+        startKey = nextEngWord.substring(0, 2);
+      }
+
+      const possibleIndicStarts = engToIndicStartMap[startKey] || [];
+      for (const startChar of possibleIndicStarts) {
+        const splitIdx = token.indexOf(startChar);
+        if (splitIdx >= 3 && token[splitIdx - 1] !== ' ') {
+          token = token.substring(0, splitIdx) + ' ' + token.substring(splitIdx);
+          break;
         }
       }
     }
-    return resultTokens.join(' ');
+    newTokens.push(token);
   }
 
-  return name;
+  return newTokens.join(' ').replace(/\s+/g, ' ').trim();
 }
 
-// Translate English text to target local language using Gemini
-async function translateTextWithGemini(text: string, targetLang: string, apiKey: string): Promise<string> {
-  if (!text || !targetLang || !apiKey) return '';
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    
-    const prompt = `Translate the following English text into clean, grammatically correct ${targetLang.toUpperCase()} language script. 
-Ensure proper spaces between words. Do not translate relationship markers like "C/O", "S/O", "W/O", "D/O" - keep their transliterated meaning (e.g., C/O -> केअर ऑफ, S/O -> सुपुत्र). 
-Only return the translated text in the local script. Do not add explanations or quotes.
 
-English Text: "${text}"`;
-
-    const response = await model.generateContent(prompt);
-    const result = response.response.text();
-    return result ? result.replace(/^"|"$/g, '').trim() : '';
-  } catch (err) {
-    console.error(`[GeminiTranslate] Failed to translate to ${targetLang}:`, err);
-    return '';
-  }
-}
 
 // Allow parsing of body size up to 10MB for PDFs in App Router
 export const maxDuration = 60;
 
 function detectLanguageFromText(text: string): string {
   if (!text) return 'english';
-  if (/[\u0A80-\u0AFF]/.test(text)) return 'gujarati';
-  if (/[\u0B80-\u0BFF]/.test(text)) return 'tamil';
-  if (/[\u0C00-\u0C7F]/.test(text)) return 'telugu';
-  if (/[\u0C80-\u0CFF]/.test(text)) return 'kannada';
-  if (/[\u0D00-\u0D7F]/.test(text)) return 'malayalam';
-  
-  if (/[\u0980-\u09FF]/.test(text)) {
-    if (/[\u09F0\u09F1]/.test(text)) return 'assamese';
-    return 'bengali';
+
+  const counts: Record<string, number> = {
+    gujarati: (text.match(/[\u0A80-\u0AFF]/g) || []).length,
+    tamil: (text.match(/[\u0B80-\u0BFF]/g) || []).length,
+    telugu: (text.match(/[\u0C00-\u0C7F]/g) || []).length,
+    kannada: (text.match(/[\u0C80-\u0CFF]/g) || []).length,
+    malayalam: (text.match(/[\u0D00-\u0D7F]/g) || []).length,
+    bengali: (text.match(/[\u0980-\u09FF]/g) || []).length,
+    punjabi: (text.match(/[\u0A00-\u0A7F]/g) || []).length,
+    odia: (text.match(/[\u0B00-\u0B7F]/g) || []).length,
+    devanagari: (text.match(/[\u0900-\u097F]/g) || []).length,
+    urdu: (text.match(/[\u0600-\u06FF]/g) || []).length,
+  };
+
+  let maxLang = 'english';
+  let maxCount = 0;
+
+  for (const [lang, count] of Object.entries(counts)) {
+    if (count > maxCount) {
+      maxCount = count;
+      maxLang = lang;
+    }
   }
-  
-  if (/[\u0A00-\u0A7F]/.test(text)) return 'punjabi';
-  if (/[\u0B00-\u0B7F]/.test(text)) return 'odia';
-  
-  if (/[\u0900-\u097F]/.test(text)) {
+
+  if (maxCount === 0) return 'english';
+  if (maxLang === 'devanagari') {
     if (/[\u0933]/.test(text)) return 'marathi';
     return 'hindi';
   }
+  if (maxLang === 'bengali') {
+    if (/[\u09F0\u09F1]/.test(text)) return 'assamese';
+    return 'bengali';
+  }
 
-  if (/[\u0600-\u06FF]/.test(text)) return 'urdu';
-  if (/[\uABC0-\uABFF\uAAE0-\uAAFF]/.test(text)) return 'manipuri';
-  
-  return 'english';
+  return maxLang;
 }
 
 function applyDynamicRepairs(text: string, dynamicMappings: Record<string, string>): string {
@@ -238,13 +238,13 @@ function parseLocalNameFromOcr(ocrText: string): string {
   const lines = ocrText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const isIndic = (text: string) => /[\u0900-\u0D7F]/.test(text);
   const noiseKeywords = [
-    'ભારત', 'સરકાર', 'ભારતીય', 'ઓળખ', 'પત્ર',
+    'ભારત', 'સરકાર', 'ભારતીય', 'ઓળખ', 'પ્રાધિકરણ',
     'भारत', 'सरकार', 'प्राधिकरण', 'अथॉरिटी',
     'Authority', 'Government', 'India', 'Unique',
     'જન્મ', 'તારીખ', 'DOB', 'YOB', 'વર્ષ',
     'પુરુષ', 'સ્ત્રી', 'MALE', 'FEMALE',
-    'लिंग', 'जन्म तिथि', 'वर्चुअल', 'आईडी', 'VID',
-    'તમારો', 'આધાર', 'મારો', 'मेरी', 'मेरा', 'पहचान',
+    'લિંગ', 'જન્મ તિથિ', 'વર્ચ્યુઅલ', 'આઈડી', 'VID',
+    'તમારો', 'આધાર', 'મારો', 'મેરી', 'મેરા', 'પહચાન',
     'Signature', 'Not', 'Verified', 'Digitally', 'signed',
     'DATE', 'Valid'
   ];
@@ -266,7 +266,7 @@ function parseLocalAddressFromOcr(ocrText: string): string {
   const lines = ocrText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const isIndic = (text: string) => /[\u0900-\u0D7F]/.test(text);
   const addressKeywords = [
-    'સરનામું', 'સરનામુ', 'पता', 'पत्ता', 'முகவரி', 'చిరునామా', 'చిరునామా:', 'విళಾಸ', 'ಮೇൽವिलास', 'ٹھکانہ', 'ਠਿਕਣਾ', 'ঠিকানা', 'ଠିକଣା', 'ਪਤਾ'
+    'સરનામું', 'સરનામુ', 'पता', 'पत्ता', 'முகவரி', 'చిరునామా', 'చిరునామా:', 'విళાસ', 'മേൽവിലാസം', 'پتا', 'ଠିକଣା', 'ঠিকানা', 'ਪਤਾ'
   ];
   let addressStartIndex = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -279,7 +279,7 @@ function parseLocalAddressFromOcr(ocrText: string): string {
   }
   if (addressStartIndex === -1) {
     const relationKeywords = [
-      'દ્વારા', 'द्वारा', 'ద్వారా', 'வழியாக', 'ಮೂಲಕ', 'വഴി', 'মাধ্যমে', 'ਦੁਆਰਾ', 'ଦ୍ବାରା',
+      'દ્વારા', 'द्वारा', 'ద్వారా', 'વઝિયાક', 'મૂલક', 'વઝિ', 'માધ્યમે', 'દુઆરા', 'ଦ୍ବାରା',
       'c/o', 's/o', 'w/o', 'd/o', 'c.o.', 's.o.', 'w.o.', 'd.o.'
     ];
     for (let i = 0; i < lines.length; i++) {
@@ -291,534 +291,43 @@ function parseLocalAddressFromOcr(ocrText: string): string {
       }
     }
   }
-  if (addressStartIndex === -1) {
-    return '';
+  if (addressStartIndex !== -1) {
+    return lines.slice(addressStartIndex).join('\n');
   }
-  const collectedLines: string[] = [];
-  for (let i = addressStartIndex; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^Address\s*[:/]?/i.test(line)) {
-      break;
-    }
-    let cleanedLine = line;
-    if (i === addressStartIndex) {
-      for (const kw of addressKeywords) {
-        cleanedLine = cleanedLine.replace(new RegExp(kw + '[:\\s]*', 'i'), '');
-      }
-    }
-    if (cleanedLine.trim()) {
-      collectedLines.push(cleanedLine.trim());
-    }
-    if (/\b\d{6}\b/.test(line)) {
-      break;
-    }
-  }
-const assembledAddress = collectedLines.join(', ').replace(/^[,\s:\-]+/, '').trim();
-  console.log('[VisionOCR] Extracted local address candidate from back card OCR:', assembledAddress);
-  return assembledAddress;
+  return '';
 }
 
 export function crossReferenceRepairLocalName(englishName: string, localName: string, lang: string): string {
-  if (!englishName || !localName) return localName;
-  const engLower = englishName.toLowerCase().replace(/[^a-z]/g, '');
-  
-  // Strip any leading digits/punctuation from local name (e.g. "२१याम्" -> "याम्")
-  const digitsPattern = /^[0-9\u0966-\u096F\u0AE6-\u0AEF\u09E6-\u09EF\u0A66-\u0A6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F\u0B66-\u0B6F\s,\.\-\/]+/;
-  let repaired = localName.replace(digitsPattern, '').trim();
+  if (!localName) return '';
+  let repaired = localName.trim();
+  const langLower = (lang || '').toLowerCase();
 
-  if (lang === 'hindi' || lang === 'marathi' || lang === 'devanagari') {
-    // Rule for Anil -> अनिल
-    if (engLower.includes('anil')) {
-      repaired = repaired.replace(/अ\s*न\s*ल/g, 'अनिल');
-    }
-    // Rule for Amit -> अमित
-    if (engLower.includes('amit')) {
-      repaired = repaired.replace(/अ\s*म\s*त/g, 'अमित');
-    }
-    // Rule for Vijay -> विजय
-    if (engLower.includes('vijay')) {
-      repaired = repaired.replace(/व\s*ज\s*य/g, 'विजय');
-    }
-    // Rule for Vinay -> विनय
-    if (engLower.includes('vinay')) {
-      repaired = repaired.replace(/व\s*न\s*य/g, 'विनय');
-    }
-    // Rule for Vikas -> विकास
-    if (engLower.includes('vikas')) {
-      repaired = repaired.replace(/व\s*क\s*ा?\s*स/g, 'विकास');
-    }
-    // Rule for Nitin -> नितिन
-    if (engLower.includes('nitin')) {
-      repaired = repaired.replace(/न\s*त\s*न/g, 'नितिन');
-    }
-    // Rule for Dilip -> दिलीप
-    if (engLower.includes('dilip')) {
-      repaired = repaired.replace(/द\s*ल\s*ी\s*प/g, 'दिलीप');
-    }
-    // Rule for Kiran -> किरण
-    if (engLower.includes('kiran')) {
-      repaired = repaired.replace(/क\s*र\s*ण/g, 'किरण');
-    }
-    // Rule for Arvind -> Arvind / अरविन्द
-    if (engLower.includes('arvind') || engLower.includes('aravind')) {
-      repaired = repaired.replace(/अ\s*र\s*व\s*ि?\s*न\s*्?\s*द/g, 'अरविंद').replace(/अ\s*र\s*व\s*न\s*्\s*द/g, 'अरविन्द');
-    }
-    // Rule for Jitendra -> जितेन्द्र / जितेंद्र
-    if (engLower.includes('jitendra')) {
-      repaired = repaired.replace(/ज\s*त\s*े\s*न\s*्\s*द\s*्\s*र/g, 'जितेन्द्र');
-    }
-
-    // Rule for Shyam -> श्याम
-    if (engLower.includes('shyam')) {
-      repaired = repaired.replace(/श\s*्\s*य\s*ा\s*म/g, 'श्याम');
-    }
-    // Rule for Krishna -> कृष्ण / कृष्णा
-    if (engLower.includes('krishna')) {
-      repaired = repaired.replace(/क\s*ृ\s*ष\s*्\s*ण/g, 'कृष्णा');
-    }
-    // Rule for Vishnu -> विष्णु
-    if (engLower.includes('vishnu')) {
-      repaired = repaired.replace(/व\s*ि\s*ष\s*्\s*णु/g, 'विष्णु');
-    }
-    // Rule for Rajendra -> राजेंद्र / राजेन्द्र
-    if (engLower.includes('rajendra')) {
-      repaired = repaired.replace(/र\s*ा\s*ज\s*े\s*न\s*्\s*द\s*्\s*र/g, 'राजेंद्र');
-    }
-    // Rule for Mahendra -> महेंद्र / महेन्द्र
-    if (engLower.includes('mahendra')) {
-      repaired = repaired.replace(/म\s*हे\s*न\s*्\s*द\s*्\s*र/g, 'महेंद्र');
-    }
-    // Rule for Surendra -> सुरेंद्र / सुरेन्द्र
-    if (engLower.includes('surendra')) {
-      repaired = repaired.replace(/सु\s*र\s*े\s*न\s*्\s*द\s*्\s*र/g, 'सुरेंद्र');
-    }
-    // Rule for Dharmendra -> धर्मेंद्र / धर्मेंन्द्र
-    if (engLower.includes('dharmendra')) {
-      repaired = repaired.replace(/ध\s*र\s*्\s*मे\s*न\s*्\s*द\s*्\s*र/g, 'धर्मेंद्र');
-    }
-    // Rule for Pushpa -> पुष्पा
-    if (engLower.includes('pushpa')) {
-      repaired = repaired.replace(/प\s*ु\s*ष\s*्\s*प\s*ा/g, 'पुष्पा');
-    }
-    // Rule for Avinash -> अविनाश
-    if (engLower.includes('avinash')) {
-      repaired = repaired.replace(/अ\s*व\s*न\s*ा\s*श/g, 'अविनाश');
-    }
-    // Rule for Nilesh -> निलेश
-    if (engLower.includes('nilesh')) {
-      repaired = repaired.replace(/न\s*ल\s*े?\s*श/g, 'निलेश');
-    }
-    // Rule for Dinesh -> दिनेश
-    if (engLower.includes('dinesh') && repaired.includes('दनेश')) {
-      repaired = repaired.replace('दनेश', 'दिनेश');
-    }
-    // Rule for Rajesh -> राजेश
-    if (engLower.includes('rajesh') && repaired.includes('राजश')) {
-      repaired = repaired.replace('राजश', 'राजेश');
-    }
-    // Rule for Rakesh -> राकेश
-    if (engLower.includes('rakesh') && repaired.includes('राकश')) {
-      repaired = repaired.replace('राकश', 'राकेश');
-    }
-    // Rule for Jignesh -> जिग्नेश
-    if (engLower.includes('jignesh') && repaired.includes('जग्नेश')) {
-      repaired = repaired.replace('जग्नेश', 'जिग्नेश');
-    }
-    // Rule for Ketan -> केतन
-    if (engLower.includes('ketan') && repaired.includes('कतन')) {
-      repaired = repaired.replace('कतन', 'केतन');
-    }
-    // Rule for Chetan -> चेतन
-    if (engLower.includes('chetan') && repaired.includes('चतन')) {
-      repaired = repaired.replace('चतन', 'चेतन');
-    }
-    // Rule for Parvin/Parveen -> परवीन
-    if ((engLower.includes('parvin') || engLower.includes('parveen')) && repaired.includes('परवन')) {
-      repaired = repaired.replace('परवन', 'परवीन');
-    }
-    // Rule for Vasim/Wasim -> वसीम
-    if ((engLower.includes('vasim') || engLower.includes('wasim')) && repaired.includes('वसम')) {
-      repaired = repaired.replace('वसम', 'वसीम');
-    }
-
-    // Generic space restorer for Devanagari based on common name parts
-    const repSpacesDev = (repaired.match(/\s/g) || []).length;
-    const engWordsCountDev = englishName.trim().split(/\s+/).filter(w => w.length > 0).length;
-    if (repSpacesDev < engWordsCountDev - 1) {
-      const commonDevanagariNameParts = [
-        'चौहान', 'पटेल', 'पाटील', 'शाह', 'मेहता', 'जोशी', 'सोनार', 'सोनी',
-        'राठौड़', 'परमार', 'सोलंकी', 'वाघेला', 'गोहिल', 'पंचाल', 'मोदी',
-        'गांधी', 'व्यास', 'पाठक', 'त्रिवेदी', 'दवे', 'जानी', 'पंड्या',
-        'भट्ट', 'रावल', 'महाराज', 'सिंह', 'कुसुम', 'लक्ष्मी', 'अनिल',
-        'अमित', 'विजय', 'विनय', 'विकास', 'नितिन', 'किरण', 'अरविंद',
-        'जितेंद्र', 'हर्ष', 'सुरेश', 'दिलीप', 'महेश', 'रमेश', 'परेश',
-        'केविन', 'लीलेश', 'सोनल', 'रेखा', 'गीता', 'सीता', 'सुनीता',
-        'अनीता', 'बबीता', 'कल्पेश', 'शैलेश', 'अशोक', 'संजय', 'भावेश',
-        'दिनेश', 'प्रदीप', 'राकेश', 'राजेश', 'बहन', 'कुमार', 'प्रसाद',
-        'चौधरी', 'बाई', 'भाई', 'लाल', 'राय', 'देवी', 'बेन', 'जी'
-      ];
-      commonDevanagariNameParts.sort((a, b) => b.length - a.length);
-      for (const part of commonDevanagariNameParts) {
-        let idx = repaired.indexOf(part);
-        while (idx !== -1) {
-          if (idx > 0 && repaired[idx - 1] !== ' ') {
-            repaired = repaired.substring(0, idx) + ' ' + repaired.substring(idx);
-            idx++;
-          }
-          const endIdx = idx + part.length;
-          if (endIdx < repaired.length && repaired[endIdx] !== ' ') {
-            repaired = repaired.substring(0, endIdx) + ' ' + repaired.substring(endIdx);
-          }
-          idx = repaired.indexOf(part, idx + part.length + 1);
+  if (langLower === 'gujarati') {
+    const commonGujaratiNameParts = [
+      'પટેલ', 'શાહ', 'જોશી', 'સોની', 'સોનાર', 'ગોહિલ', 'મોદી', 'દવે',
+      'જાની', 'ભટ્ટ', 'રાવલ', 'મોરી', 'કંઠારીયા', 'પ્રજાપતિ', 'કડિયા',
+      'સુથાર', 'લોહાર', 'ઝાલા', 'જાડેજા', 'ચાવડા', 'કુસુમ', 'અનિલ',
+      'અમિત', 'વિજય', 'વિનય', 'વિકાસ', 'નિતિન', 'કિરણ', 'હર્ષ',
+      'બાઇ', 'ભાઇ', 'લાલ', 'રાય', 'દેવી', 'બેન', 'સિંઘ', 'જી'
+    ];
+    commonGujaratiNameParts.sort((a, b) => b.length - a.length);
+    for (const part of commonGujaratiNameParts) {
+      let idx = repaired.indexOf(part);
+      while (idx !== -1) {
+        if (idx > 0 && repaired[idx - 1] !== ' ') {
+          repaired = repaired.substring(0, idx) + ' ' + repaired.substring(idx);
+          idx++;
         }
-      }
-    }
-  } else if (lang === 'gujarati') {
-    // Rule for Anil -> અનિલ
-    if (engLower.includes('anil') && repaired.includes('અનલ')) {
-      repaired = repaired.replace('અનલ', 'અનિલ');
-    }
-    // Rule for Amit -> અમિત
-    if (engLower.includes('amit') && repaired.includes('અમત')) {
-      repaired = repaired.replace('અમત', 'અમિત');
-    }
-    // Rule for Vijay -> વિજય
-    if (engLower.includes('vijay') && repaired.includes('વજય')) {
-      repaired = repaired.replace('વજય', 'વિજય');
-    }
-    // Rule for Vinay -> વિનય
-    if (engLower.includes('vinay') && repaired.includes('વનય')) {
-      repaired = repaired.replace('વનય', 'વિનય');
-    }
-    // Rule for Vikas -> વિકાસ
-    if (engLower.includes('vikas') && repaired.includes('વકાસ')) {
-      repaired = repaired.replace('વકાસ', 'વિકાસ');
-    }
-    // Rule for Nitin -> નિતિન
-    if (engLower.includes('nitin') && repaired.includes('નતન')) {
-      repaired = repaired.replace('નતન', 'નિતિન');
-    }
-    // Rule for Kiran -> કિરણ
-    if (engLower.includes('kiran') && repaired.includes('કરણ')) {
-      repaired = repaired.replace('કરણ', 'કિરણ');
-    }
-    // Rule for Arvind -> અરવિંદ
-    if ((engLower.includes('arvind') || engLower.includes('aravind')) && repaired.includes('અરવંદ')) {
-      repaired = repaired.replace('અરવંદ', 'અરવિંદ');
-    }
-    // ── Repha (ર) loss repairs — pdfjs drops floating repha from conjuncts ──
-    // Harsh -> હર્ષ (repha over ષ dropped shows as "હષ")
-    if (engLower.includes('harsh') && repaired.includes('હષ')) {
-      repaired = repaired.replace('હષ', 'હર્ષ');
-    }
-    // Shivam / Shiv -> શિવ (i-matra dropped shows as "શવ")
-    if ((engLower.includes('shivam') || engLower.includes('shiv')) && repaired.includes('શવ')) {
-      repaired = repaired.replace(/શ\s*વ/, 'શિવ');
-    }
-    // Bhai -> ભાઈ (aa-matra dropped shows as "ભઈ")
-    if (engLower.includes('bhai') && repaired.includes('ભઈ')) {
-      repaired = repaired.replace('ભઈ', 'ભાઈ');
-    }
-    // Patel -> પટેળ (e-matra dropped shows as "પટળ")
-    if (engLower.includes('patel') && repaired.includes('પટળ')) {
-      repaired = repaired.replace('પટળ', 'પટેળ');
-    }
-    // Suresh -> સુ'ર ેશ (matras dropped)
-    if (engLower.includes('suresh')) {
-      repaired = repaired.replace(/સ\s*સ\s*ે?\s*શ/g, 'સ\u0AC1\u0AB0\u0AC7\u0AB6');
-    }
-    // Dilip -> દિ'લ ીપ (i-matra and long-i dropped)
-    if (engLower.includes('dilip') && /દ\s*લ\s*ીપ|દ\s*ીપ/.test(repaired)) {
-      repaired = repaired.replace(/દ\s*િ?\s*લ\s*ી?\s*પ/, 'દ\u0ABF\u0AB2\u0AC0\u0AAA');
-    }
-    // Mahesh -> મહ ે'શ (e-matra dropped)
-    if (engLower.includes('mahesh') && repaired.includes('મહશ')) {
-      repaired = repaired.replace('મહશ', 'મ\u0AB9\u0AC7\u0AB6');
-    }
-    // Ramesh -> ર ે'શ  (e-matra dropped)
-    if (engLower.includes('ramesh') && repaired.includes('રમશ')) {
-      repaired = repaired.replace('રમશ', 'ર\u0AAE\u0AC7\u0AB6');
-    }
-    // Paresh -> પ'ર ે'શ (e-matra dropped)
-    if (engLower.includes('paresh') && repaired.includes('પ'+ 'ર' + 'શ')) {
-      repaired = repaired.replace('પ\u0AB0\u0AB6', 'પ\u0AB0\u0AC7\u0AB6');
-    }
-
-    // Rule for Kevin -> કેવિન (i-matra dropped shows as "કેવન")
-    if (engLower.includes('kevin')) {
-      repaired = repaired.replace(/કે\s*વ\s*ન/g, 'કેવિન');
-    }
-    // Rule for Avinash -> અવિનાશ
-    if (engLower.includes('avinash')) {
-      repaired = repaired.replace(/અ\s*વ\s*ના\s*શ/g, 'અવિનાશ');
-    }
-    // Rule for Nilesh -> નિલેશ
-    if (engLower.includes('nilesh')) {
-      repaired = repaired.replace(/ન\s*લ\s*ે?\s*શ/g, 'નિલેશ');
-    }
-    // Rule for Dinesh -> દિનેશ
-    if (engLower.includes('dinesh')) {
-      repaired = repaired.replace(/દ\s*ન\s*ે?\s*શ/g, 'દિનેશ');
-    }
-    // Rule for Rajesh -> રાજેશ
-    if (engLower.includes('rajesh')) {
-      repaired = repaired.replace(/રા\s*જ\s*શ/g, 'રાજેશ');
-    }
-    // Rule for Rakesh -> રાકેश
-    if (engLower.includes('rakesh')) {
-      repaired = repaired.replace(/રા\s*ક\s*શ/g, 'રાકેશ');
-    }
-    // Rule for Jignesh -> જીગ્નેશ
-    if (engLower.includes('jignesh')) {
-      repaired = repaired.replace(/જ\s*ગ\s*્?\s*ન\s*ે?\s*શ/g, 'જીગ્નેશ');
-    }
-    // Rule for Ketan -> કેતન
-    if (engLower.includes('ketan')) {
-      repaired = repaired.replace(/ક\s*ત\s*ન/g, 'કેતન');
-    }
-    // Rule for Chetan -> ચેતન
-    if (engLower.includes('chetan')) {
-      repaired = repaired.replace(/ચ\s*ત\s*ન/g, 'ચેતન');
-    }
-    // Rule for Parvin/Parveen -> પરવિન
-    if (engLower.includes('parvin') || engLower.includes('parveen')) {
-      repaired = repaired.replace(/પર\s*વ\s*ન/g, 'પરવિન');
-    }
-    // Rule for Vasim/Wasim -> વસિમ
-    if (engLower.includes('vasim') || engLower.includes('wasim')) {
-      repaired = repaired.replace(/વ\s*સ\s*મ/g, 'વસિમ');
-    }
-    // Rule for Laxmi / Laxmiben -> લક્ષ્મી / લક્ષ્મીબેન (pdfjs drops conjuncts)
-    if (engLower.includes('laxmi') || engLower.includes('lakshmi')) {
-      if (repaired.includes('ર્લમી')) {
-        repaired = repaired.replace('ર્લમી', 'ર લક્ષ્મી');
-      }
-      if (repaired.includes('લમી')) {
-        repaired = repaired.replace('લમી', 'લક્ષ્મી');
-      }
-      if (repaired.includes('લક્ષમી')) {
-        repaired = repaired.replace('લક્ષમી', 'લક્ષ્મી');
-      }
-    }
-    // Rule for Lilesh/Lilesh -> લીલેશ (long-i and e-matra dropped shows as "ललेश" or "ललश")
-    if (engLower.includes('lilesh') && /લ\s*લ\s*[ે]?\s*શ|લ\s*[ે]\s*શ/.test(repaired)) {
-      // Only replace if it hasn't already been fully repaired to avoid "લીલીલેશ"
-      if (!repaired.includes('લીલેશ')) {
-        repaired = repaired.replace(/લ\s*લ\s*[ે]?\s*શ|લ\s*[ે]\s*શ/, 'લીલેશ');
-      }
-      // Cleanup just in case "લી" was separated by space and we created "લી લીલેશ"
-      repaired = repaired.replace(/લી\s*લીલેશ/g, 'લીલેશ');
-      repaired = repaired.replace(/લી\s*લી\s*લેશ/g, 'લીલેશ');
-    }
-    // Rule for Patil -> પાટીલ (pdf strips long-i matra, shows as "પાટલ" or "પટલ" or "પાટીલ")
-    if (engLower.includes('patil')) {
-      // Fix matra first
-      repaired = repaired.replace(/પ[ા]?ટલ(?!ી)/g, 'પાટીલ');
-      // Add space before Patil if missing
-      repaired = repaired.replace(/(?<![\s])(પાટીલ)/, ' $1');
-      // Add space after Patil if missing  
-      repaired = repaired.replace(/(પાટીલ)(?![઀-૿\s])/, '$1 ');
-      repaired = repaired.trim();
-    }
-
-    // Space healing for common name parts based on English name components
-    if (engLower.includes('patel')) {
-      repaired = repaired.replace(/^(પટેલ)(?!\s)/, '$1 ');
-      repaired = repaired.replace(/(?<!\s)(પટેલ)$/, ' $1');
-    }
-    if (engLower.includes('harsh')) {
-      repaired = repaired.replace(/^(હર્ષ)(?!\s)/, '$1 ');
-      repaired = repaired.replace(/(?<!\s)(હર્ષ)$/, ' $1');
-    }
-    if (engLower.includes('bhai')) {
-      repaired = repaired.replace(/^(ભાઈ)(?!\s)/, '$1 ');
-      repaired = repaired.replace(/(?<!\s)(ભાઈ)$/, ' $1');
-    }
-    if (engLower.includes('ben')) {
-      repaired = repaired.replace(/^(બેન)(?!\s)/, '$1 ');
-      repaired = repaired.replace(/(?<!\s)(બેન)$/, ' $1');
-    }
-    if (engLower.includes('kumar')) {
-      repaired = repaired.replace(/^(કુમાર)(?!\s)/, '$1 ');
-      repaired = repaired.replace(/(?<!\s)(કુમાર)$/, ' $1');
-    }
-    if (engLower.includes('lilesh') || engLower.includes('lilesh')) {
-      repaired = repaired.replace(/^(લીલેશ)(?!\s)/, '$1 ');
-      repaired = repaired.replace(/(?<!\s)(લીલેશ)$/, ' $1');
-    }
-    if (engLower.includes('kevin')) {
-      repaired = repaired.replace(/^(કેવિન)(?!\s)/, '$1 ');
-      repaired = repaired.replace(/(?<!\s)(કેવિન)$/, ' $1');
-    }
-    if (engLower.includes('patil')) {
-      repaired = repaired.replace(/(?<![\s])(પાટીલ)/, ' $1').trim();
-    }
-    // Generic space restorer for Gujarati based on common name parts
-    const repSpacesGuj = (repaired.match(/\s/g) || []).length;
-    const engWordsCountGuj = englishName.trim().split(/\s+/).filter(w => w.length > 0).length;
-    if (repSpacesGuj < engWordsCountGuj - 1) {
-      const commonGujaratiNameParts = [
-        'સિલ્વરરેસિડેન્સી', 'રેસિડેન્સી', 'એપાર્ટમેન્ટ', 'જિતેન્દ્ર',
-        'ચૌહાણ', 'પાટીલ', 'મહેતા', 'રાઠોડ', 'પરમાર', 'સોલંકી', 'વાઘેલા',
-        'પટેલીયા', 'પંચાલ', 'ત્રિવેદી', 'પંડ્યા', 'મહારાज', 'લક્ષ્મી',
-        'અરવિંદ', 'સુરેશ', 'દિલીપ', 'મહેશ', 'રમેશ', 'પરેશ', 'કેવિન',
-        'લીલેશ', 'સોનલ', 'રેખા', 'ગીતા', 'સીતા', 'સુનિતા', 'અનિતા',
-        'બબીતા', 'કલ્પેશ', 'શૈલેષ', 'અશોક', 'સંજય', 'ભાવેશ', 'દિનેશ',
-        'પ્રદીપ', 'રાકેશ', 'રાજેશ', 'બહેન', 'કુમાર', 'પ્રસાદ', 'ચૌધરી',
-        'પટેલ', 'શાહ', 'જોશી', 'સોની', 'સોનાર', 'ગોહિલ', 'મોદી', 'દવે',
-        'જાની', 'ભટ્ટ', 'રાવલ', 'મોરી', 'કણઝારીયા', 'પ્રજાપતિ', 'કડિયા',
-        'સુથાર', 'લોહાર', 'ઝાલા', 'જાડેજા', 'ચાવડા', 'કુસુમ', 'અનિલ',
-        'અમિત', 'વિજય', 'વિનય', 'વિકાસ', 'નિતિન', 'કિરણ', 'હર્ષ',
-        'બાઇ', 'ભાઈ', 'લાલ', 'રાય', 'દેવી', 'બેન', 'સિંહ', 'જી'
-      ];
-      commonGujaratiNameParts.sort((a, b) => b.length - a.length);
-      for (const part of commonGujaratiNameParts) {
-        let idx = repaired.indexOf(part);
-        while (idx !== -1) {
-          if (idx > 0 && repaired[idx - 1] !== ' ') {
-            repaired = repaired.substring(0, idx) + ' ' + repaired.substring(idx);
-            idx++;
-          }
-          const endIdx = idx + part.length;
-          if (endIdx < repaired.length && repaired[endIdx] !== ' ') {
-            repaired = repaired.substring(0, endIdx) + ' ' + repaired.substring(endIdx);
-          }
-          idx = repaired.indexOf(part, idx + part.length + 1);
+        const endIdx = idx + part.length;
+        if (endIdx < repaired.length && repaired[endIdx] !== ' ') {
+          repaired = repaired.substring(0, endIdx) + ' ' + repaired.substring(endIdx);
         }
-      }
-    }
-
-    // ── GENERIC SPACE RESTORATION based on English word count ──────────────
-    // Handles any case where English has N words but local has fewer than N-1 spaces
-    const engWords = englishName.trim().split(/\s+/).filter(w => w.length > 0);
-    const repSpaces = (repaired.match(/\s/g) || []).length;
-    if (engWords.length > 1 && repSpaces < engWords.length - 1 && repaired.trim().length > 0) {
-      if (repSpaces === 0) {
-        // Fully concatenated — split proportionally into N segments
-        const chars = [...repaired.trim()];
-        const total = chars.length;
-        const parts: string[] = [];
-        let offset = 0;
-        const engNoSpace = englishName.replace(/\s+/g, '');
-        for (let wi = 0; wi < engWords.length; wi++) {
-          const engWord = engWords[wi];
-          const segLen = wi < engWords.length - 1
-            ? Math.round((engWord.length / engNoSpace.length) * total)
-            : total - offset;
-          parts.push(chars.slice(offset, offset + segLen).join(''));
-          offset += segLen;
-        }
-        const candidate = parts.filter(p => p.length > 0).join(' ');
-        if (candidate.length === repaired.length + engWords.length - 1) {
-          repaired = candidate;
-          console.log(`[SPACE_RESTORE] Gujarati name fully split by English word count (${engWords.length} words): "${repaired}"`);
-        }
-      } else {
-        // Partially spaced — find which existing token(s) need further splitting
-        // Split by existing spaces, then try to split each token that is still too long
-        const tokens = repaired.split(/\s+/);
-        const needed = engWords.length; // how many tokens we want total
-        if (tokens.length < needed) {
-          // Find the best partition of English words to map to local tokens
-          // A partition of m elements into n non-empty consecutive groups
-          const m = engWords.length;
-          const n = tokens.length;
-          
-          // Generate all partitions of size n
-          const partitions: number[][] = [];
-          function getPartitions(remElements: number, remGroups: number, current: number[]) {
-            if (remGroups === 1) {
-              if (remElements >= 1) {
-                partitions.push([...current, remElements]);
-              }
-              return;
-            }
-            for (let size = 1; size <= remElements - remGroups + 1; size++) {
-              current.push(size);
-              getPartitions(remElements - size, remGroups - 1, current);
-              current.pop();
-            }
-          }
-          getPartitions(m, n, []);
-
-          // Calculate variance of ratio (local_token_length / sum_of_eng_word_lengths) for each partition
-          let bestPartition: number[] | null = null;
-          let minCost = Infinity;
-
-          const totalLocalLen = [...repaired.replace(/\s+/g, '')].length;
-          const totalEngLen = englishName.replace(/\s+/g, '').length;
-          const targetRatio = totalLocalLen / totalEngLen;
-
-          for (const partition of partitions) {
-            let engIdx = 0;
-            let cost = 0;
-            let valid = true;
-
-            for (let i = 0; i < n; i++) {
-              const groupSize = partition[i];
-              const groupEngWords = engWords.slice(engIdx, engIdx + groupSize);
-              const groupEngLen = groupEngWords.join('').length;
-              const tokenLen = [...tokens[i]].length;
-
-              if (groupEngLen === 0) {
-                valid = false;
-                break;
-              }
-
-              const ratio = tokenLen / groupEngLen;
-              // cost is sum of squared differences from targetRatio
-              cost += Math.pow(ratio - targetRatio, 2);
-              engIdx += groupSize;
-            }
-
-            if (valid && cost < minCost) {
-              minCost = cost;
-              bestPartition = partition;
-            }
-          }
-
-          if (bestPartition) {
-            // Apply the best partition to split compound tokens
-            const newTokens: string[] = [];
-            let engIdx = 0;
-            for (let i = 0; i < n; i++) {
-              const groupSize = bestPartition[i];
-              const groupEngWords = engWords.slice(engIdx, engIdx + groupSize);
-              const token = tokens[i];
-
-              if (groupSize === 1) {
-                newTokens.push(token);
-              } else {
-                // Split the token into groupSize parts proportionally
-                const chars = [...token];
-                const total = chars.length;
-                const subParts: string[] = [];
-                let offset = 0;
-                const groupEngLen = groupEngWords.join('').length;
-
-                for (let si = 0; si < groupSize; si++) {
-                  const eWord = groupEngWords[si];
-                  const segLen = si < groupSize - 1
-                    ? Math.round((eWord.length / groupEngLen) * total)
-                    : total - offset;
-                  subParts.push(chars.slice(offset, offset + Math.max(1, segLen)).join(''));
-                  offset += Math.max(1, segLen);
-                }
-                newTokens.push(...subParts.filter(p => p.length > 0));
-              }
-              engIdx += groupSize;
-            }
-
-            if (newTokens.length === needed) {
-              repaired = newTokens.join(' ');
-              console.log(`[SPACE_RESTORE] Gujarati name partition split (${needed} words, partition: ${bestPartition.join(', ')}): "${repaired}"`);
-            }
-          }
-        }
+        idx = repaired.indexOf(part, idx + part.length + 1);
       }
     }
   }
-  // Apply our script-independent splitConcatenatedIndicName to restore correct word spacing
+
+  // Apply script-independent splitConcatenatedIndicName to safely restore word boundaries without chopping characters
   repaired = splitConcatenatedIndicName(repaired, englishName);
   return repaired;
 }
@@ -852,7 +361,7 @@ const LANGUAGE_REPAIR_CONFIG: Record<string, RepairAssets> = {
       'haryana': 'हरियाणा',
       'bihar': 'बिहार',
       'west bengal': 'पश्चिम बंगाल',
-      'andhra pradesh': 'आन्ध्र प्रदेश',
+      'andhra pradesh': 'आंध्र प्रदेश',
       'telangana': 'तेलंगाना',
       'karnataka': 'कर्नाटक',
       'tamil nadu': 'तमिलनाडु',
@@ -879,7 +388,7 @@ const LANGUAGE_REPAIR_CONFIG: Record<string, RepairAssets> = {
       'haryana': 'हरियाणा',
       'bihar': 'बिहार',
       'west bengal': 'पश्चिम बंगाल',
-      'andhra pradesh': 'आन्ध्र प्रदेश',
+      'andhra pradesh': 'आंध्र प्रदेश',
       'telangana': 'तेलंगाना',
       'karnataka': 'कर्नाटक',
       'tamil nadu': 'तमिलनाडु',
@@ -904,7 +413,7 @@ const LANGUAGE_REPAIR_CONFIG: Record<string, RepairAssets> = {
   },
   gujarati: {
     poLabel: 'પોસ્ટ:',
-    distLabel: 'જિલ્લો:',
+    distLabel: 'જીલ્લો:',
     soLabel: 'આત્મજ:',
     woLabel: 'પત્ની:',
     doLabel: 'પુત્રી:',
@@ -914,88 +423,76 @@ const LANGUAGE_REPAIR_CONFIG: Record<string, RepairAssets> = {
       'maharashtra': 'મહારાષ્ટ્ર',
       'rajasthan': 'રાજસ્થાન',
     }
-  },
-  tamil: {
-    poLabel: 'அஞ்சல்:',
-    distLabel: 'மாவட்டம்:',
-    soLabel: 'மகன்:',
-    woLabel: 'மனைவி:',
-    doLabel: 'மகள்:',
-    coLabel: 'கேர் ஆஃப்:',
-    stateMap: {
-      'tamil nadu': 'தமிழ்நாடு',
-      'puducherry': 'புதுச்சேரி',
-    }
-  },
-  telugu: {
-    poLabel: 'పోస్ట్:',
-    distLabel: 'జిల్లా:',
-    soLabel: 'కుమారుడు:',
-    woLabel: 'భార్య:',
-    doLabel: 'కుమార్తె:',
-    coLabel: 'కేర్ ఆఫ్:',
-    stateMap: {
-      'andhra pradesh': 'ఆంధ్రప్రదేశ్',
-      'telangana': 'తెలంగాణ',
-    }
-  },
-  kannada: {
-    poLabel: 'ಅಂಚೆ:',
-    distLabel: 'ಜಿಲ್ಲೆ:',
-    soLabel: 'ಮಗ:',
-    woLabel: 'ಪತ್ನಿ:',
-    doLabel: 'ಮಗಳು:',
-    coLabel: 'ಕೇರ್ ಆಫ್:',
-    stateMap: {
-      'karnataka': 'ಕರ್ನಾಟಕ',
-    }
-  },
-  malayalam: {
-    poLabel: 'പോസ്റ്റ്:',
-    distLabel: 'ജില്ല:',
-    soLabel: 'മകൻ:',
-    woLabel: 'ഭാര്യ:',
-    doLabel: 'മകൾ:',
-    coLabel: 'കെയർ ഓഫ്:',
-    stateMap: {
-      'kerala': 'കേരള',
-    }
-  },
-  bengali: {
-    poLabel: 'পোস্ট:',
-    distLabel: 'জেলা:',
-    soLabel: 'পুত্র:',
-    woLabel: 'স্ত্রী:',
-    doLabel: 'কন্যা:',
-    coLabel: 'যত্নে:',
-    stateMap: {
-      'west bengal': 'পশ্চিমবঙ্গ',
-      'tripura': 'ত্রিপুরা',
-    }
-  },
-  punjabi: {
-    poLabel: 'ਡਾਕਖਾਨਾ:',
-    distLabel: 'ਜ਼ਿਲ੍ਹਾ:',
-    soLabel: 'ਪੁੱਤਰ:',
-    woLabel: 'ਪਤਨੀ:',
-    doLabel: 'ਧੀ:',
-    coLabel: 'ਕੇਅਰ ਆਫ:',
-    stateMap: {
-      'punjab': 'ਪੰਜਾਬ',
-      'haryana': 'ਹਰਿਆਣਾ',
-    }
-  },
-  odia: {
-    poLabel: 'ପୋଷ୍ଟ:',
-    distLabel: 'ଜିଲ୍ଲା:',
-    soLabel: 'ପୁତ୍ର:',
-    woLabel: 'ପତ୍ନୀ:',
-    doLabel: 'କନ୍ୟା:',
-    coLabel: 'ଯତ୍ନରେ:',
-    stateMap: {
-      'odisha': 'ଓଡ଼ିଶା',
-    }
   }
+};
+const UNUSED_LEGACY_CONFIG: any = {
+  tamil: {
+      soLabel: 'à°à±à°®à°¾à°°à±à°¡à±:',
+        woLabel: 'à°­à°¾à°°à±à°¯:',
+          doLabel: 'à°à±à°®à°¾à°°à±à°¤à±:',
+            coLabel: 'à°à±à°°à± à°à°«à±:',
+              stateMap: {
+    'andhra pradesh': 'à°à°à°§à±à°°à°ªà±à°°à°¦à±à°¶à±',
+      'telangana': 'à°¤à±à°²à°à°à°¾à°£',
+    }
+},
+kannada: {
+  poLabel: 'à²à²à²à³:',
+    distLabel: 'à²à²¿à²²à³à²²à³:',
+      soLabel: 'à²®à²:',
+        woLabel: 'à²ªà²¤à³à²¨à²¿:',
+          doLabel: 'à²®à²à²³à³:',
+            coLabel: 'à²à³à²°à³ à²à²«à³:',
+              stateMap: {
+    'karnataka': 'à²à²°à³à²¨à²¾à²à²',
+    }
+},
+malayalam: {
+  poLabel: 'à´ªàµà´¸àµà´±àµà´±àµ:',
+    distLabel: 'à´à´¿à´²àµà´²:',
+      soLabel: 'à´®à´àµ»:',
+        woLabel: 'à´­à´¾à´°àµà´¯:',
+          doLabel: 'à´®à´àµ¾:',
+            coLabel: 'à´àµà´¯àµ¼ à´à´«àµ:',
+              stateMap: {
+    'kerala': 'à´àµà´°à´³',
+    }
+},
+bengali: {
+  poLabel: 'à¦ªà§à¦¸à§à¦:',
+    distLabel: 'à¦à§à¦²à¦¾:',
+      soLabel: 'à¦ªà§à¦¤à§à¦°:',
+        woLabel: 'à¦¸à§à¦¤à§à¦°à§:',
+          doLabel: 'à¦à¦¨à§à¦¯à¦¾:',
+            coLabel: 'à¦¯à¦¤à§à¦¨à§:',
+              stateMap: {
+    'west bengal': 'à¦ªà¦¶à§à¦à¦¿à¦®à¦¬à¦à§à¦',
+      'tripura': 'à¦¤à§à¦°à¦¿à¦ªà§à¦°à¦¾',
+    }
+},
+punjabi: {
+  poLabel: 'à¨¡à¨¾à¨à¨à¨¾à¨¨à¨¾:',
+    distLabel: 'à¨à¨¼à¨¿à¨²à©à¨¹à¨¾:',
+      soLabel: 'à¨ªà©à©±à¨¤à¨°:',
+        woLabel: 'à¨ªà¨¤à¨¨à©:',
+          doLabel: 'à¨§à©:',
+            coLabel: 'à¨à©à¨à¨° à¨à¨«:',
+              stateMap: {
+    'punjab': 'à¨ªà©°à¨à¨¾à¨¬',
+      'haryana': 'à¨¹à¨°à¨¿à¨à¨£à¨¾',
+    }
+},
+odia: {
+  poLabel: 'à¬ªà­à¬·à­à¬:',
+    distLabel: 'à¬à¬¿à¬²à­à¬²à¬¾:',
+      soLabel: 'à¬ªà­à¬¤à­à¬°:',
+        woLabel: 'à¬ªà¬¤à­à¬¨à­:',
+          doLabel: 'à¬à¬¨à­à­à¬¾:',
+            coLabel: 'à¬¯à¬¤à­à¬¨à¬°à­:',
+              stateMap: {
+    'odisha': 'à¬à¬¡à¬¼à¬¿à¬¶à¬¾',
+    }
+}
 };
 
 export function repairLocalAddress(englishAddress: string | null | undefined, localAddress: string | null | undefined, lang: string): string {
@@ -1022,8 +519,8 @@ export function repairLocalAddress(englishAddress: string | null | undefined, lo
         .flat()
         .map(p => p.replace(':', ''))
         .join('|');
-      
-      const localRelRegex = new RegExp(`^(${allLocalPrefixes}|C\\/O|W\\/O|S\\/O|D\\/O|C\\.O\\.|S\\.O\\.|W\\.O\\.|D\\.O\\.|केयर অফ|केयर ऑफ|केअर ऑफ|કેર ઓફ)[:\\s]*([\\s\\S]+)$`, 'i');
+
+      const localRelRegex = new RegExp(`^(${allLocalPrefixes}|C\\/O|W\\/O|S\\/O|D\\/O|C\\.O\\.|S\\.O\\.|W\\.O\\.|D\\.O\\.|à¤à¥à¤¯à¤° à¦à¦«|à¤à¥à¤¯à¤° à¤à¤«|à¤à¥à¤à¤° à¤à¤«|àªà«àª° àªàª«)[:\\s]*([\\s\\S]+)$`, 'i');
       const localRelMatch = firstLocalPart.match(localRelRegex);
 
       if (localRelMatch) {
@@ -1067,10 +564,7 @@ export function repairLocalAddress(englishAddress: string | null | undefined, lo
 
     // 2. If English part starts with DIST
     if (/^DIST\b/i.test(engPart) || /District/i.test(engPart)) {
-      const hasLocalDistLabel = /(जिला|जिल्हा|જીલ્લો|જિલ્લો|જિલ્લા|જિલ્લાઓ|જિલ્લોઓ|જિલ્લે|જિલ્લે|மாவட்டம்|జిల్లా|జిల్లే|జిల్లే|జిల్లా)/.test(localPart);
-      if (!hasLocalDistLabel) {
-        localPart = `${config.distLabel} ${localPart}`;
-      }
+      localPart = `${config.distLabel} ${localPart.replace(new RegExp(config.distLabel, 'gi'), '').trim()}`;
       localParts[localIdx] = localPart;
       localIdx--;
       continue;
@@ -1078,10 +572,7 @@ export function repairLocalAddress(englishAddress: string | null | undefined, lo
 
     // 3. If English part starts with PO
     if (/^PO\b/i.test(engPart) || /^P\.O\./i.test(engPart) || /Post\s*Office/i.test(engPart)) {
-      const hasLocalPoLabel = /(डाकघर|पोस्ट|પોસ્ટ|அஞ்சல்|పోสต์|ಅಂಚೆ|পোস্ট|ਡਾਕਖਾਨਾ)/.test(localPart);
-      if (!hasLocalPoLabel) {
-        localPart = `${config.poLabel} ${localPart}`;
-      }
+      localPart = `${config.poLabel} ${localPart.replace(new RegExp(config.poLabel, 'gi'), '').trim()}`;
       localParts[localIdx] = localPart;
       localIdx--;
       continue;
@@ -1137,25 +628,15 @@ export function repairLocalAddress(englishAddress: string | null | undefined, lo
 function getCorrectGenderLine(genderLine: string, gender: string, lang: string): string {
   const genderLower = (gender || '').toUpperCase();
   const langLower = (lang || '').toLowerCase();
-  
+
   const mapping: Record<string, { male: string; female: string; trans: string }> = {
-    gujarati: { male: 'પુરુષ / MALE', female: 'સ્ત્રી / FEMALE', trans: 'ટ્રાન્સજેન્ડર / TRANSGENDER' },
-    hindi: { male: 'पुरुष / MALE', female: 'महिला / FEMALE', trans: 'किन्नर / TRANSGENDER' },
-    marathi: { male: 'पुरुष / MALE', female: 'महिला / FEMALE', trans: 'तृतीयपंथी / TRANSGENDER' },
-    tamil: { male: 'ஆண் / MALE', female: 'பெண் / FEMALE', trans: 'திருநங்கை / TRANSGENDER' },
-    telugu: { male: 'పురుషుడు / MALE', female: 'స్త్రీ / FEMALE', trans: 'నపుంసకుడు / TRANSGENDER' },
-    kannada: { male: 'ಪುರುಷ / MALE', female: 'ಮಹಿಳೆ / FEMALE', trans: 'ತೃತീയಲಿಂಗಿ / TRANSGENDER' },
-    malayalam: { male: 'പുരുഷൻ / MALE', female: 'സ്ത്രീ / FEMALE', trans: 'ഭിന്നലിംഗക്കാരൻ / TRANSGENDER' },
-    bengali: { male: 'পুরুষ / MALE', female: 'মহিলা / FEMALE', trans: 'রূপান্তরিত লিঙ্গ / TRANSGENDER' },
-    assamese: { male: 'পুৰুষ / MALE', female: 'মহিলা / FEMALE', trans: 'তৃতীয় লিংগ / TRANSGENDER' },
-    punjabi: { male: 'ਪੁਰਸ਼ / MALE', female: 'ਔਰਤ / FEMALE', trans: 'ਟ੍ਰਾਂਸਜੈਂਡਰ / TRANSGENDER' },
-    odia: { male: 'ପୁରୁଷ / MALE', female: 'ମହିଳା / FEMALE', trans: 'ରୂପାନ୍ତରିତ ଲିଙ୍ଗ / TRANSGENDER' },
-    urdu: { male: 'مرد / MALE', female: 'عورت / FEMALE', trans: 'خواجہ سرا / TRANSGENDER' },
+    odia: { male: 'à¬ªà­à¬°à­à¬· / MALE', female: 'à¬®à¬¹à¬¿à¬³à¬¾ / FEMALE', trans: 'à¬°à­à¬ªà¬¾à¬¨à­à¬¤à¬°à¬¿à¬¤ à¬²à¬¿à¬à­à¬ / TRANSGENDER' },
+    urdu: { male: 'ÙØ±Ø¯ / MALE', female: 'Ø¹ÙØ±Øª / FEMALE', trans: 'Ø®ÙØ§Ø¬Û Ø³Ø±Ø§ / TRANSGENDER' },
     english: { male: 'MALE', female: 'FEMALE', trans: 'TRANSGENDER' }
   };
 
   const currentMap = mapping[langLower] || mapping.english;
-  
+
   if (genderLower.includes('FEMALE')) {
     return currentMap.female;
   } else if (genderLower.includes('TRANS')) {
@@ -1168,19 +649,19 @@ function getCorrectGenderLine(genderLine: string, gender: string, lang: string):
 function getCorrectDobLine(dob: string, lang: string): string {
   const langLower = (lang || '').toLowerCase();
   const mapping: Record<string, string> = {
-    gujarati: 'જન્મ તારીખ / DOB: ',
-    hindi: 'जन्म तिथि / DOB: ',
-    marathi: 'जन्म तारीख / DOB: ',
-    devanagari: 'जन्म तिथि / DOB: ',
-    tamil: 'பிறந்த தேதி / DOB: ',
-    telugu: 'పుట్టిన తేదీ / DOB: ',
-    kannada: 'ಹುಟ್ಟಿದ ದಿನಾಂಕ / DOB: ',
-    malayalam: 'ജനന തീയതി / DOB: ',
-    bengali: 'জন্ম তারিখ / DOB: ',
-    assamese: 'জন্ম তাৰিখ / DOB: ',
-    punjabi: 'ਜਨਮ ਮਿਤੀ / DOB: ',
-    odia: 'ଜନ୍ମ ତାରିଖ / DOB: ',
-    urdu: 'تاریخ پیدائش / DOB: ',
+    gujarati: 'àªàª¨à«àª® àª¤àª¾àª°à«àª / DOB: ',
+    hindi: 'à¤à¤¨à¥à¤® à¤¤à¤¿à¤¥à¤¿ / DOB: ',
+    marathi: 'à¤à¤¨à¥à¤® à¤¤à¤¾à¤°à¥à¤ / DOB: ',
+    devanagari: 'à¤à¤¨à¥à¤® à¤¤à¤¿à¤¥à¤¿ / DOB: ',
+    tamil: 'à®ªà®¿à®±à®¨à¯à®¤ à®¤à¯à®¤à®¿ / DOB: ',
+    telugu: 'à°ªà±à°à±à°à°¿à°¨ à°¤à±à°¦à± / DOB: ',
+    kannada: 'à²¹à³à²à³à²à²¿à²¦ à²¦à²¿à²¨à²¾à²à² / DOB: ',
+    malayalam: 'à´à´¨à´¨ à´¤àµà´¯à´¤à´¿ / DOB: ',
+    bengali: 'à¦à¦¨à§à¦® à¦¤à¦¾à¦°à¦¿à¦ / DOB: ',
+    assamese: 'à¦à¦¨à§à¦® à¦¤à¦¾à§°à¦¿à¦ / DOB: ',
+    punjabi: 'à¨à¨¨à¨® à¨®à¨¿à¨¤à© / DOB: ',
+    odia: 'à¬à¬¨à­à¬® à¬¤à¬¾à¬°à¬¿à¬ / DOB: ',
+    urdu: 'ØªØ§Ø±ÛØ® Ù¾ÛØ¯Ø§Ø¦Ø´ / DOB: ',
     english: 'DOB: '
   };
   const label = mapping[langLower] || mapping.english;
@@ -1190,18 +671,18 @@ function getCorrectDobLine(dob: string, lang: string): string {
 function getCorrectAddressLabel(lang: string): string {
   const langLower = (lang || '').toLowerCase();
   const mapping: Record<string, string> = {
-    gujarati: 'સરનામું :',
-    hindi: 'पता :',
-    marathi: 'पत्ता :',
-    tamil: 'முகவரி :',
-    telugu: 'చిరునామా :',
-    kannada: 'ವಿಳಾಸ :',
-    malayalam: 'മേൽവിലാസം :',
-    bengali: 'ঠিকানা :',
-    assamese: 'ঠিকনা :',
-    punjabi: 'ਪਤਾ :',
-    odia: 'ଠିକଣା :',
-    urdu: 'پتہ :',
+    gujarati: 'àª¸àª°àª¨àª¾àª®à«àª :',
+    hindi: 'à¤ªà¤¤à¤¾ :',
+    marathi: 'à¤ªà¤¤à¥à¤¤à¤¾ :',
+    tamil: 'à®®à¯à®à®µà®°à®¿ :',
+    telugu: 'à°à°¿à°°à±à°¨à°¾à°®à°¾ :',
+    kannada: 'à²µà²¿à²³à²¾à²¸ :',
+    malayalam: 'à´®àµàµ½à´µà´¿à´²à´¾à´¸à´ :',
+    bengali: 'à¦ à¦¿à¦à¦¾à¦¨à¦¾ :',
+    assamese: 'à¦ à¦¿à¦à¦¨à¦¾ :',
+    punjabi: 'à¨ªà¨¤à¨¾ :',
+    odia: 'à¬ à¬¿à¬à¬£à¬¾ :',
+    urdu: 'Ù¾ØªÛ :',
     english: 'Address:'
   };
   return mapping[langLower] || mapping.english;
@@ -1230,8 +711,8 @@ function calculateChangePercentage(original: string, modified: string): number {
   if (!original) return 0;
   const distance = levenshteinDistance(original, modified);
   // Allow up to 6 character changes safely for short strings without triggering the % limit
-  // Indic conjuncts like ક્ષ use 4 codepoints (ક + ્ + ષ + ્), so a single visual missing letter is distance=4.
-  if (distance <= 6) return 0; 
+  // Indic conjuncts like àªà«àª· use 4 codepoints (àª + à« + àª· + à«), so a single visual missing letter is distance=4.
+  if (distance <= 6) return 0;
   return (distance / Math.max(original.length, 1)) * 100;
 }
 
@@ -1287,7 +768,7 @@ async function extractTextWithPdfJs(pdfBytes: Uint8Array, password: string | nul
  * Extracts text from a PDF buffer by unlocking it if necessary and parsing it server-side.
  */
 async function extractTextFromPdf(
-  pdfBytes: Uint8Array, 
+  pdfBytes: Uint8Array,
   password: string | null
 ): Promise<{ text: string; decryptedBytes: Uint8Array; error?: never } | { text?: never; decryptedBytes?: never; error: string; code?: number }> {
   try {
@@ -1300,7 +781,7 @@ async function extractTextFromPdf(
         console.log('[PdfExtract] PDF is encrypted, but no password was provided');
         return { error: 'PASSWORD_REQUIRED', code: 1 };
       }
-      
+
       try {
         console.log('[PdfExtract] PASSWORD_UNLOCK_ATTEMPT: Attempting decryption with password...');
         workingBytes = await decryptPDF(pdfBytes, password);
@@ -1441,9 +922,9 @@ State (if available): ${state || 'Not Specified'}
 
 --- INPUT DATA ---
 ${JSON.stringify({
-  EnglishFields: englishFields,
-  BrokenRegionalFields: brokenRegionalFields
-}, null, 2)}
+      EnglishFields: englishFields,
+      BrokenRegionalFields: brokenRegionalFields
+    }, null, 2)}
 
 --- TARGET LANGUAGE ---
 Language: ${lang.toUpperCase()}
@@ -1517,12 +998,12 @@ export async function POST(request: NextRequest) {
   try {
     console.log(`[API/Extract] PDF_UPLOAD_RECEIVED (time: ${Date.now()}, elapsed: 0ms)`);
     const formData = await request.formData();
-    
+
     const file = formData.get('file') as File | null;
     const password = formData.get('password') as string | null;
     const expectedDocType = formData.get('docType') as string | null;
 
-    // Always trim the password — whitespace causes "INVALID_PASSWORD" errors
+    // Always trim the password â whitespace causes "INVALID_PASSWORD" errors
     const trimmedPassword = password ? password.trim() : null;
 
     let userGeminiApiKey: string | null = null;
@@ -1547,8 +1028,8 @@ export async function POST(request: NextRequest) {
           .single();
         if (!error && data) {
           if ((data.remaining_cards || 0) <= 0 && process.env.TEST_MODE !== 'true') {
-            return NextResponse.json({ 
-              error: 'Recharge Required: You have 0 credits. Please purchase at least the Trial Pack (₹20 for 10 Credits) to start using PVC card services.' 
+            return NextResponse.json({
+              error: 'Recharge Required: You have 0 credits. Please purchase at least the Trial Pack (â¹20 for 10 Credits) to start using PVC card services.'
             }, { status: 403 });
           }
           if (data.gemini_api_key) {
@@ -1571,33 +1052,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'File size exceeds 10MB limit.' }, { status: 413 });
     }
 
-    console.log(`[API/Extract] File: ${file.name} | Size: ${file.size} bytes | Password: ${trimmedPassword ? `YES (len=${trimmedPassword.length})` : 'NO'}`);
-
-    // SIMULATION BYPASS FOR E2E TESTING
-    const isAmol = file.name.includes('amol.pdf');
-    const isLalita = file.name.includes('lalita.pdf');
-    if (isAmol || isLalita) {
-      if (!trimmedPassword) {
-        console.log('[API/Extract] Simulation: amol.pdf or lalita.pdf requires password');
-        return NextResponse.json({ error: 'PASSWORD_REQUIRED' }, { status: 400 });
-      }
-      
-      const expectedPassword = isAmol ? 'AMOL1992' : 'LALI1995';
-      if (trimmedPassword.toUpperCase() !== expectedPassword) {
-        console.log(`[API/Extract] Simulation: Invalid password ${trimmedPassword} for ${file.name}`);
-        return NextResponse.json({ error: 'INVALID_PASSWORD' }, { status: 400 });
-      }
-      
-      console.log('[API/Extract] Simulation: Password correct, proceeding with decrypted data');
-    }
-
-    let uint8Array: Uint8Array;
-    const arrayBuffer = await file.arrayBuffer();
-    uint8Array = new Uint8Array(arrayBuffer);
-
-    // Set password to null for standard parser if we simulated decryption
-    const extractPassword = (isAmol || isLalita) ? null : trimmedPassword;
-    const result = await extractTextFromPdf(uint8Array, extractPassword);
+    const uint8Array = new Uint8Array(await file.arrayBuffer());
+    const result = await extractTextFromPdf(uint8Array, trimmedPassword);
 
     if ('error' in result) {
       if (result.error === 'PASSWORD_REQUIRED') {
@@ -1614,42 +1070,42 @@ export async function POST(request: NextRequest) {
     console.log(`[API/Extract] Text extracted. Length: ${rawText.length}`);
 
     if (rawText.length < 10) {
-      console.warn('[API/Extract] Very short text — PDF may contain only images (scanned)');
-      return NextResponse.json({ 
-        error: 'Could not extract text. The PDF may be a scanned image. Please upload a digital (e-Aadhaar) PDF.' 
+      console.warn('[API/Extract] Very short text â PDF may contain only images (scanned)');
+      return NextResponse.json({
+        error: 'Could not extract text. The PDF may be a scanned image. Please upload a digital (e-Aadhaar) PDF.'
       }, { status: 400 });
     }
 
     console.log('[API/Extract] Detecting document type...');
     const decryptedBuffer = Buffer.from(decryptedBytes);
     const parser = DocumentDetector.detectAndParse(rawText, decryptedBuffer, trimmedPassword, expectedDocType);
-    
+
     if (!parser) {
       console.error('[API/Extract] Detection failed. Raw text sample:', rawText.substring(0, 500));
-      return NextResponse.json({ 
-        error: 'Unsupported document type. Could not detect Aadhaar, PAN, Ayushman, e-Shram, Voter, or ABHA structure.' 
+      return NextResponse.json({
+        error: 'Unsupported document type. Could not detect Aadhaar, PAN, Ayushman, e-Shram, Voter, or ABHA structure.'
       }, { status: 400 });
     }
 
     console.log(`[API/Extract] Parser: ${parser.constructor.name}`);
     let extractedData = await parser.parse();
-    
+
     // Default sources
     extractedData.textSource = (parser as any).qrData ? 'QR_XML' : 'PDF_TEXT';
     extractedData.languageSource = extractedData.textSource;
-    
+
     console.log('DATA_EXTRACTED_LOCALLY');
     if ((parser as any).qrData) {
       console.log('[API/Extract] TEXT_SOURCE_SELECTED: QR_XML (No Gemini needed for base data)');
     }
 
-    // ── CAPTURE ORIGINAL PDF TEXT LAYER VALUES ───────────────────────────────
-    // These values are frozen here — before any AI/QR can modify them.
+    // ââ CAPTURE ORIGINAL PDF TEXT LAYER VALUES âââââââââââââââââââââââââââââââ
+    // These values are frozen here â before any AI/QR can modify them.
     // They represent the raw Unicode exactly as embedded in the Aadhaar PDF.
-    const originalLocalName    = (extractedData.localName    || '').trim();
+    const originalLocalName = (extractedData.localName || '').trim();
     const originalLocalAddress = (extractedData.localAddress || '').trim();
-    console.log(`[LOCAL_LANG_DEBUG] PDF Text Layer → localName="${originalLocalName}" localAddress="${originalLocalAddress.substring(0, 50)}"`);
-    // ────────────────────────────────────────────────────────────────────────
+    console.log(`[LOCAL_LANG_DEBUG] PDF Text Layer â localName="${originalLocalName}" localAddress="${originalLocalAddress.substring(0, 50)}"`);
+    // ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
     let repairedLocalName = originalLocalName;
     let repairedLocalAddress = originalLocalAddress;
@@ -1669,30 +1125,30 @@ export async function POST(request: NextRequest) {
       try {
         console.log('[API/Extract] Google Vision OCR: Attempting extraction via high-res PDF rendering and Google OCR...');
         ocrLogs.push('Attempting high-res PDF rendering via Puppeteer...');
-        
+
         // Convert decrypted bytes to base64 for pdfRenderer
         const decryptedBase64 = Buffer.from(decryptedBytes).toString('base64');
-        
+
         // Render PDF page and crop full front and back cards
         const crops = await cropAadhaarRegions(decryptedBase64);
         ocrLogs.push(`PDF rendering complete. Front card crop present: ${!!crops.frontCardFull}, Back card crop present: ${!!crops.backCardFull}`);
-        
+
         if (crops.frontCardFull && crops.backCardFull) {
           console.log('[API/Extract] Running Google Vision API on cropped front and back cards...');
           ocrLogs.push('Sending front and back card images to Google Cloud Vision REST endpoint...');
-          
+
           // Execute Google OCR in parallel to save time
           const [frontOcrText, backOcrText] = await Promise.all([
             callGoogleVisionOcr(crops.frontCardFull, googleVisionKey),
             callGoogleVisionOcr(crops.backCardFull, googleVisionKey)
           ]);
-          
+
           ocrLogs.push(`Front card OCR raw text length: ${frontOcrText.length}`);
           ocrLogs.push(`Back card OCR raw text length: ${backOcrText.length}`);
 
           const ocrLocalName = parseLocalNameFromOcr(frontOcrText);
           const ocrLocalAddress = parseLocalAddressFromOcr(backOcrText);
-          
+
           ocrLogs.push(`Parsed OCR Local Name: "${ocrLocalName}"`);
           ocrLogs.push(`Parsed OCR Local Address: "${ocrLocalAddress}"`);
 
@@ -1718,21 +1174,20 @@ export async function POST(request: NextRequest) {
       ocrLogs.push(`Bypassed Vision OCR because: KeyMissing=${!googleVisionKey}, Disabled=${!isVisionOcrEnabled}, NoDecryptedBytes=${!decryptedBytes}, DocType=${parser.getDocumentType()}`);
     }
 
-    if (!visionOcrSuccess) {
-      // Apply local repairs — Gujarati repair engine only for Gujarati script
-      // Other languages: preserve raw Unicode from PDF/QR as-is (no repair engine exists yet)
+    const docType = parser.getDocumentType();
+    const detectedLang = detectLanguageFromText(rawText);
+    const effectiveKey = process.env.GEMINI_API_KEY || userGeminiApiKey;
+
+    if (!visionOcrSuccess && !effectiveKey) {
+      // Apply local repairs only as offline fallback when AI key is unavailable
       if (detectedLangForRepair === 'gujarati') {
         try {
-          // Triggering route compilation refresh
           const dynamicRepairsMap = await getDynamicRepairs();
           const dynamicMappings = Object.fromEntries(dynamicRepairsMap.entries());
           extractedData.localName = repairGujaratiText(originalLocalName, dynamicMappings);
           extractedData.localAddress = repairGujaratiText(originalLocalAddress, dynamicMappings);
-          // Cross-reference English name to repair dropped vowel signs in Gujarati
-          extractedData.localName = crossReferenceRepairLocalName(extractedData.name || '', extractedData.localName || '', 'gujarati');
           repairedLocalName = extractedData.localName || '';
           repairedLocalAddress = extractedData.localAddress || '';
-          console.log(`[LOCAL_REPAIR_DEBUG] Gujarati repair applied → localName="${extractedData.localName}" localAddress="${(extractedData.localAddress || '').substring(0, 50)}"`);
         } catch (repairErr: any) {
           console.error('[LOCAL_REPAIR] Failed to run Gujarati repair engine:', repairErr.message);
         }
@@ -1742,50 +1197,31 @@ export async function POST(request: NextRequest) {
           const dynamicMappings = Object.fromEntries(dynamicRepairsMap.entries());
           extractedData.localName = repairMarathiText(originalLocalName, dynamicMappings);
           extractedData.localAddress = repairMarathiText(originalLocalAddress, dynamicMappings);
-          // Cross-reference English name to repair dropped vowel signs in Hindi/Devanagari/Marathi
-          extractedData.localName = crossReferenceRepairLocalName(extractedData.name || '', extractedData.localName || '', 'hindi');
           repairedLocalName = extractedData.localName || '';
           repairedLocalAddress = extractedData.localAddress || '';
-          console.log(`[LOCAL_REPAIR_DEBUG] Marathi/Devanagari repair applied → localName="${extractedData.localName}" localAddress="${(extractedData.localAddress || '').substring(0, 50)}"`);
         } catch (repairErr: any) {
           console.error('[LOCAL_REPAIR] Failed to run Marathi repair engine:', repairErr.message);
         }
-      } else if (detectedLangForRepair !== 'english') {
-        try {
-          const dynamicRepairsMap = await getDynamicRepairs(detectedLangForRepair);
-          if (dynamicRepairsMap.size > 0) {
-            const dynamicMappings = Object.fromEntries(dynamicRepairsMap.entries());
-            extractedData.localName = applyDynamicRepairs(originalLocalName, dynamicMappings);
-            extractedData.localAddress = applyDynamicRepairs(originalLocalAddress, dynamicMappings);
-            repairedLocalName = extractedData.localName || '';
-            repairedLocalAddress = extractedData.localAddress || '';
-            console.log(`[LOCAL_REPAIR_DEBUG] Dynamic repairs applied for ${detectedLangForRepair} → localName="${extractedData.localName}"`);
-          } else {
-            console.log(`[LOCAL_REPAIR_DEBUG] No active repairs found in DB for language ${detectedLangForRepair}.`);
-          }
-        } catch (repairErr: any) {
-          console.error(`[LOCAL_REPAIR] Failed to run dynamic repair for ${detectedLangForRepair}:`, repairErr.message);
-        }
-      } else {
-        console.log(`[LOCAL_REPAIR_DEBUG] Skipping repair for lang=${detectedLangForRepair} — preserving raw Unicode.`);
       }
+    } else if (effectiveKey) {
+      console.log(`[LOCAL_REPAIR_DEBUG] Gemini AI enabled. Preserving exact PDF text without manual regex mutation: localName="${originalLocalName}"`);
     }
 
-    // --- SMART BYPASS & LOCAL/OFFLINE MODE LOGIC ---
-    const docType = parser.getDocumentType();
-    const detectedLang = detectLanguageFromText(rawText);
-    const isPureEnglish = detectedLang === 'english';
-    
-    // Developer Gemini extraction is disabled; we now use the localized Smart Repair engine
-    let needGemini = false;
+    // Helper to verify native text is healthy and not garbled/corrupted
+    const isHealthyLocalText = (text: string | null | undefined): boolean => {
+      if (!text || text.trim().length < 2) return false;
+      if (/àª|à§|Ã¢|ï¿½|\uFFFD/i.test(text)) return false;
+      return /[\u0900-\u0D7F\u0A80-\u0AFF\u0600-\u06FF]/.test(text);
+    };
+
+    // --- SMART BYPASS & GEMINI DIRECT AI EXTRACTION LOGIC ---
+    // Bypass Gemini AI ONLY if native PDF parser already extracted clean, healthy local name and address
+    const hasCompleteLocalText = isHealthyLocalText(extractedData.localName) && (isHealthyLocalText(extractedData.localAddress) || !!extractedData.address);
+    let needGemini = !!(effectiveKey && !hasCompleteLocalText && (docType === 'AADHAAR' || docType === 'VOTER' || docType === 'AYUSHMAN' || docType === 'PAN' || docType === 'ESHRAM' || docType === 'ABHA'));
+    if (effectiveKey && hasCompleteLocalText) {
+      console.log('[API/Extract] Native PDF parser extracted complete, healthy local language text. Bypassing Gemini AI call to save tokens!');
+    }
     let tryLocalOcr = false;
-
-    if (docType === 'AADHAAR' && !isPureEnglish) {
-      tryLocalOcr = true;
-    }
-
-    // For AYUSHMAN, Gemini extraction is disabled as per user request for offline-only mode
-    const ayushmanGeminiKey = null;
 
     let localOcrData: any = null;
     if (tryLocalOcr) {
@@ -1802,29 +1238,29 @@ export async function POST(request: NextRequest) {
         const ocrResponse = await fetch('http://127.0.0.1:8000/process-pdf', {
           method: 'POST',
           body: formDataObj,
-          signal: AbortSignal.timeout(120000)
+          signal: AbortSignal.timeout(8000)  // Fast fail: if OCR service isn't up, skip in 8s
         });
 
         if (ocrResponse.ok) {
           const ocrResult = await ocrResponse.json();
           if (ocrResult.success && (ocrResult.localName || ocrResult.localAddress)) {
-             console.log('[API/Extract] Local OCR Success. Bypassing Gemini API.');
-             localOcrData = {
-               nameLocalScript: ocrResult.localName,
-               addressLocalScript: ocrResult.localAddress,
-               nameEnglish: extractedData.name,
-               dob: extractedData.dob,
-               gender: extractedData.gender,
-               aadhaarNumber: extractedData.documentNumber,
-               vid: extractedData.vid,
-               addressEnglish: extractedData.address,
-               issuedDate: extractedData.issueDate,
-               detailsAsOnDate: extractedData.detailsAsOn
-             };
-             needGemini = false;
+            console.log('[API/Extract] Local OCR Success. Bypassing Gemini API.');
+            localOcrData = {
+              nameLocalScript: ocrResult.localName,
+              addressLocalScript: ocrResult.localAddress,
+              nameEnglish: extractedData.name,
+              dob: extractedData.dob,
+              gender: extractedData.gender,
+              aadhaarNumber: extractedData.documentNumber,
+              vid: extractedData.vid,
+              addressEnglish: extractedData.address,
+              issuedDate: extractedData.issueDate,
+              detailsAsOnDate: extractedData.detailsAsOn
+            };
+            needGemini = false;
           } else {
-             console.log('[API/Extract] Local OCR server returned error status. Disabling Gemini AI extraction to save tokens.');
-             needGemini = false;
+            console.log('[API/Extract] Local OCR server returned error status. Disabling Gemini AI extraction to save tokens.');
+            needGemini = false;
           }
         } else {
           console.log('[API/Extract] Local OCR server returned error status. Disabling Gemini AI extraction to save tokens.');
@@ -1845,18 +1281,18 @@ export async function POST(request: NextRequest) {
         if (effectiveKey) {
           console.log('[API/Extract] Gemini API key detected. Overriding text extraction with AI...');
           const genAI = new GoogleGenerativeAI(effectiveKey);
-          const model = genAI.getGenerativeModel({ 
+          const model = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
             generationConfig: { responseMimeType: "application/json" }
           });
           console.log(`[API/Extract] AI extraction starting for document type: ${docType}`);
-        
+
           let promptLang = detectedLang;
           if (promptLang === 'english' && extractedData.address) {
-             promptLang = getLocalLanguageFromAddress(extractedData.address) || 'english';
+            promptLang = getLocalLanguageFromAddress(extractedData.address) || 'english';
           }
           if (promptLang === 'english') {
-             promptLang = 'the regional script visible in the PDF image (e.g. Hindi, Marathi, Bengali, Tamil, etc.)';
+            promptLang = 'the regional script visible in the PDF image (e.g. Hindi, Marathi, Bengali, Tamil, etc.)';
           }
 
           let aiPrompt = '';
@@ -1871,12 +1307,12 @@ ${rawText}
 --- END RAW TEXT ---
 
 CRITICAL INSTRUCTIONS:
-1. You are a REPAIR ENGINE, NOT a content generator. Your ONLY job is to repair broken characters (glyphs, matras, conjuncts) in the original local-language text. You must READ the visual PDF image provided to see the correct local text.
-2. DO NOT translate English into the local language. DO NOT reorder words. DO NOT rewrite addresses. DO NOT hallucinate new data.
-3. The raw PDF text often drops conjunct consonants (e.g. 'લમીબેન' instead of 'લક્ષ્મીબેન') due to subset-font corruption. Use the PDF image to see the correct spelling.
-4. REPAIR RULE FOR NAMES: Cross-reference the English name and the PDF image to repair the corrupted local name. Example: English 'Laxmiben' + Corrupt 'લમીબેન' -> Repaired 'લક્ષ્મીબેન'.
-5. REPAIR RULE FOR ADDRESS: Preserve the exact structure, line order, and word order of the original local address. Only repair broken individual characters based on the PDF image.
-6. If the document is purely in English and has absolutely NO regional script anywhere on it, leave local script fields empty. Otherwise, extract the regional script you see in the PDF image.
+1. You are a REPAIR ENGINE, NOT a content generator. Your ONLY job is to repair broken characters (glyphs, matras, conjuncts) in the original local-language text.
+2. DO NOT translate English into the local language arbitrarily. DO NOT reorder words. DO NOT rewrite addresses. DO NOT hallucinate new data.
+3. The raw PDF text often drops conjunct consonants or corrupts matras (e.g. 'àª²àª®à«àª¬à«àª¨' instead of 'àª²àªà«àª·à«àª®à«àª¬à«àª¨', 'àª¸àª¦à«àª§à«' instead of 'àª¸àª¿àª¦à«àª§àª¿', 'àª¡à«àªàª¡à«àª²à«' instead of 'àª¡àª¿àªàª¡à«àª²à«') due to subset-font corruption. Correct all spelling errors to match standard official local language spelling.
+4. REPAIR RULE FOR NAMES: Cross-reference the English name to repair the corrupted local name. Example: English 'Siddhi Ravsaheb Patil' + Corrupt 'àª¸àª¦à«àª§à« àª°àª¾àªµàª¸àª¾àª¹à«àª¬ àªªàª¾àªà«àª²' -> Repaired 'àª¸àª¿àª¦à«àª§àª¿ àª°àª¾àªµàª¸àª¾àª¹à«àª¬ àªªàª¾àªà«àª²'. Example: English 'Laxmiben' + Corrupt 'àª²àª®à«àª¬à«àª¨' -> Repaired 'àª²àªà«àª·à«àª®à«àª¬à«àª¨'.
+5. REPAIR RULE FOR ADDRESS: Preserve the exact structure, line order, and word order of the original local address. Repair broken individual characters and matras (e.g. 'àª¡à«àªàª¡à«àª²à«' -> 'àª¡àª¿àªàª¡à«àª²à«').
+6. If the document is purely in English and has absolutely NO regional script anywhere on it, leave local script fields empty. Otherwise, extract the regional script accurately.
 
 FIELD EXTRACTION RULES:
 - nameLocalScript: REPAIRED exact name in local script
@@ -1914,7 +1350,7 @@ ${rawText}
 --- END RAW TEXT ---
 
 Extract the following details from the PAN card text:
-- name: The person's full name in English Roman capital letters (usually below "Name" or "नाम")
+- name: The person's full name in English Roman capital letters (usually below "Name" or "à¤¨à¤¾à¤®")
 - dob: Date of birth in DD/MM/YYYY format
 - panNumber: The 10-character alphanumeric PAN number formatted as AAAAA1111A (5 uppercase letters, 4 digits, 1 uppercase letter)
 
@@ -1941,8 +1377,8 @@ Extract ALL of the following fields from what you can see in the PDF:
 - rationId: Ration card number if shown (null if not)
 
 IMPORTANT RULES:
-1. "name" must be the PERSON's actual name — NOT a district, city, or state name
-2. PM-JAY IDs can be purely numeric for some states (like UP) — extract them even if they look like a plain number
+1. "name" must be the PERSON's actual name â NOT a district, city, or state name
+2. PM-JAY IDs can be purely numeric for some states (like UP) â extract them even if they look like a plain number
 3. If a field is not visible or not on the card, return null for that field
 4. Return ONLY valid JSON, no explanation, no markdown
 
@@ -2023,7 +1459,7 @@ Extract the following details from the Voter ID card:
 - epicNumber: The unique EPIC Number (e.g. ABC1234567 or XYZ/123456/789)
 - address: Full address in English
 - addressLocalScript: Full address in local script if present, or null
-- assemblyConstituency: Assembly Constituency Name & Number (e.g. "155 - Olpad" or "155-ઓલપાડ") in English or regional, or null
+- assemblyConstituency: Assembly Constituency Name & Number (e.g. "155 - Olpad" or "155-àªàª²àªªàª¾àª¡") in English or regional, or null
 
 Return ONLY a valid JSON object:
 {
@@ -2045,7 +1481,7 @@ Return ONLY a valid JSON object:
           const aiResult = await model.generateContent([aiPrompt]);
           const responseText = aiResult.response.text();
           aiData = JSON.parse(responseText);
-          
+
           console.log('[API/Extract] AI Extraction Success:', aiData.name || aiData.nameEnglish);
 
           if (aiResult.response.usageMetadata) {
@@ -2076,7 +1512,7 @@ Return ONLY a valid JSON object:
         // We have successfully run Gemini or Local OCR
         const textSource = localOcrData ? (qrData ? 'QR_XML' : 'LOCAL_OCR') : 'GEMINI';
         const langSource = localOcrData ? (qrData ? 'QR_XML' : 'LOCAL_OCR') : 'GEMINI';
-        
+
         extractedData.textSource = textSource;
         extractedData.languageSource = langSource;
 
@@ -2084,37 +1520,37 @@ Return ONLY a valid JSON object:
           console.log('[API/Extract] TEXT_SOURCE_SELECTED: QR_XML (AI emergency fallback path)');
           extractedData = {
             ...extractedData,
-            name:           qrData.name           || extractedData.name          || aiData.nameEnglish,
-            localName:      aiData.nameLocalScript     || repairedLocalName      || '',
-            dob:            qrData.dob             || qrData.yob                  || extractedData.dob         || aiData.dob,
-            gender:         qrData.gender          || extractedData.gender         || aiData.gender,
-            documentNumber: qrData.uid             || extractedData.documentNumber || aiData.aadhaarNumber,
-            vid:            qrData.vid             || extractedData.vid            || aiData.vid,
-            address:        qrData.address         || extractedData.address        || aiData.addressEnglish,
-            localAddress:   aiData.addressLocalScript  || repairedLocalAddress   || '',
-            mobile:         extractedData.mobile   || aiData.mobile,
-            issueDate:      extractedData.issueDate  || aiData.issuedDate,
-            detailsAsOn:    extractedData.detailsAsOn || aiData.detailsAsOnDate,
-            dobLine:        null,
-            genderLine:     null,
+            name: qrData.name || extractedData.name || aiData.nameEnglish,
+            localName: aiData.nameLocalScript || repairedLocalName || '',
+            dob: qrData.dob || qrData.yob || extractedData.dob || aiData.dob,
+            gender: qrData.gender || extractedData.gender || aiData.gender,
+            documentNumber: qrData.uid || extractedData.documentNumber || aiData.aadhaarNumber,
+            vid: qrData.vid || extractedData.vid || aiData.vid,
+            address: qrData.address || extractedData.address || aiData.addressEnglish,
+            localAddress: aiData.addressLocalScript || repairedLocalAddress || '',
+            mobile: extractedData.mobile || aiData.mobile,
+            issueDate: extractedData.issueDate || aiData.issuedDate,
+            detailsAsOn: extractedData.detailsAsOn || aiData.detailsAsOnDate,
+            dobLine: null,
+            genderLine: null,
             localAddressLabel: null,
           };
         } else {
           extractedData = {
             ...extractedData,
-            name:           aiData.nameEnglish    || extractedData.name,
-            localName:      aiData.nameLocalScript     || repairedLocalName      || '',
-            dob:            aiData.dob            || extractedData.dob,
-            gender:         aiData.gender         || extractedData.gender,
-            documentNumber: aiData.aadhaarNumber  || extractedData.documentNumber,
-            vid:            aiData.vid            || extractedData.vid,
-            address:        aiData.addressEnglish || extractedData.address,
-            localAddress:   aiData.addressLocalScript  || repairedLocalAddress   || '',
-            mobile:         extractedData.mobile  || aiData.mobile,
-            issueDate:      extractedData.issueDate  || aiData.issuedDate,
-            detailsAsOn:    extractedData.detailsAsOn || aiData.detailsAsOnDate,
-            dobLine:        null,
-            genderLine:     null,
+            name: aiData.nameEnglish || extractedData.name,
+            localName: aiData.nameLocalScript || repairedLocalName || '',
+            dob: aiData.dob || extractedData.dob,
+            gender: aiData.gender || extractedData.gender,
+            documentNumber: aiData.aadhaarNumber || extractedData.documentNumber,
+            vid: aiData.vid || extractedData.vid,
+            address: aiData.addressEnglish || extractedData.address,
+            localAddress: aiData.addressLocalScript || repairedLocalAddress || '',
+            mobile: extractedData.mobile || aiData.mobile,
+            issueDate: extractedData.issueDate || aiData.issuedDate,
+            detailsAsOn: extractedData.detailsAsOn || aiData.detailsAsOnDate,
+            dobLine: null,
+            genderLine: null,
             localAddressLabel: null,
           };
         }
@@ -2142,26 +1578,26 @@ Return ONLY a valid JSON object:
 
         extractedData = {
           ...extractedData,
-          name:             (qrData?.name)    || extractedData.name    || '',
-          localName:        bestLocalName     || '',
-          dob:              (qrData?.dob)     || (qrData?.yob)  || extractedData.dob || '',
-          gender:           (qrData?.gender)  || extractedData.gender || '',
-          documentNumber:   (qrData?.uid)     || extractedData.documentNumber || '',
-          vid:              (qrData?.vid)     || extractedData.vid || '',
-          address:          (qrData?.address) || extractedData.address || '',
-          localAddress:     bestLocalAddress  || '',
-          mobile:           extractedData.mobile || '',
-          issueDate:        extractedData.issueDate || '',
-          detailsAsOn:      extractedData.detailsAsOn || '',
-          dobLine:          null,
-          genderLine:       null,
+          name: (qrData?.name) || extractedData.name || '',
+          localName: bestLocalName || '',
+          dob: (qrData?.dob) || (qrData?.yob) || extractedData.dob || '',
+          gender: (qrData?.gender) || extractedData.gender || '',
+          documentNumber: (qrData?.uid) || extractedData.documentNumber || '',
+          vid: (qrData?.vid) || extractedData.vid || '',
+          address: (qrData?.address) || extractedData.address || '',
+          localAddress: bestLocalAddress || '',
+          mobile: extractedData.mobile || '',
+          issueDate: extractedData.issueDate || '',
+          detailsAsOn: extractedData.detailsAsOn || '',
+          dobLine: null,
+          genderLine: null,
           localAddressLabel: null,
         };
       }
 
       // Calculate confidence score and perform user-provided Gemini correction if needed
       const hasQrLocalData = !!(qrData && (qrData.lname || qrData.laddress || qrData.local_name || qrData.local_address));
-      
+
       let confidenceScore = 100;
       if (!hasQrLocalData && detectedLangForRepair !== 'english') {
         const nameConf = calculateTextConfidence(originalLocalName, repairedLocalName);
@@ -2175,100 +1611,161 @@ Return ONLY a valid JSON object:
         try {
           console.log(`[API/Extract] Aadhaar regional text detected (${detectedLangForRepair}) with confidence ${confidenceScore.toFixed(1)}% < 95%. Triggering Gemini correction...`);
           const fieldsToRepair: Record<string, string> = {
-              localName: originalLocalName,
-              localAddress: originalLocalAddress,
-              nameEnglish: extractedData.name || '',
-              addressEnglish: extractedData.address || ''
-            };
-            const repairRes = await invokeUserGeminiRepair(geminiApiKeyForRepair, detectedLangForRepair, fieldsToRepair, 'AADHAAR', extractedData.state || null);
-            const repaired = repairRes.result;
-            if (repaired.localName) {
-              extractedData.localName = repaired.localName;
-            }
-            if (repaired.localAddress) {
-              extractedData.localAddress = repaired.localAddress;
-            }
-
-            // Log token usage to Supabase if tokens were consumed
-            if (repairRes.tokensUsed) {
-              try {
-                const supabase = await createClient();
-                await supabase.from('gemini_token_usage').insert({
-                  user_id: user?.id || null,
-                  input_tokens: repairRes.tokensUsed.input,
-                  output_tokens: repairRes.tokensUsed.output,
-                  total_tokens: repairRes.tokensUsed.total,
-                  document_type: 'AADHAAR'
-                });
-              } catch (dbErr: any) {
-                console.error('[API/Extract] Failed to log Aadhaar repair tokens to Supabase:', dbErr.message);
-              }
-            }
-            aiRepaired = true;
-            extractedData.languageSource = 'GEMINI_AI';
-            console.log('[API/Extract] Gemini correction completed successfully.');
-          } catch (geminiErr: any) {
-            const errMsg = geminiErr.message || String(geminiErr);
-            const errStack = geminiErr.stack || "";
-            console.error('[API/Extract] Gemini correction failed with exception:', geminiErr);
-            console.error('[API/Extract] Exception stack trace:', errStack);
-            
-            let errorDetail = "Unknown AI error";
-            if (errMsg.includes("aborted") || errMsg.includes("timeout") || geminiErr.name === "AbortError") {
-              errorDetail = "Timeout (exceeded 15s limit)";
-            } else if (errMsg.includes("API key not valid") || errMsg.includes("API_KEY_INVALID") || errMsg.includes("invalid api key")) {
-              errorDetail = "Invalid API Key (401)";
-            } else if (errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("429")) {
-              errorDetail = "Quota exceeded (429)";
-            } else if (errMsg.includes("permission") || errMsg.includes("403")) {
-              errorDetail = "Permission denied (403)";
-            } else if (errMsg.includes("not found") || errMsg.includes("404")) {
-              errorDetail = "Model not found (404)";
-            } else if (errMsg.includes("safety") || errMsg.includes("blocked")) {
-              errorDetail = "Safety block (blocked content)";
-            } else if (errMsg.includes("fetch failed") || errMsg.includes("network")) {
-              errorDetail = "Network error (cannot connect to Google)";
-            } else {
-              errorDetail = errMsg.replace(/\[GoogleGenerativeAI Error\]:\s*/, '').substring(0, 80);
-            }
-            
-            aiWarning = `AI repair unavailable: ${errorDetail}. Standard language engine used.`;
+            localName: originalLocalName,
+            localAddress: originalLocalAddress,
+            nameEnglish: extractedData.name || '',
+            addressEnglish: extractedData.address || ''
+          };
+          const repairRes = await invokeUserGeminiRepair(geminiApiKeyForRepair, detectedLangForRepair, fieldsToRepair, 'AADHAAR', extractedData.state || null);
+          const repaired = repairRes.result;
+          if (repaired.localName) {
+            extractedData.localName = repaired.localName;
           }
+          if (repaired.localAddress) {
+            extractedData.localAddress = repaired.localAddress;
+          }
+
+          // Log token usage to Supabase if tokens were consumed
+          if (repairRes.tokensUsed) {
+            try {
+              const supabase = await createClient();
+              await supabase.from('gemini_token_usage').insert({
+                user_id: user?.id || null,
+                input_tokens: repairRes.tokensUsed.input,
+                output_tokens: repairRes.tokensUsed.output,
+                total_tokens: repairRes.tokensUsed.total,
+                document_type: 'AADHAAR'
+              });
+            } catch (dbErr: any) {
+              console.error('[API/Extract] Failed to log Aadhaar repair tokens to Supabase:', dbErr.message);
+            }
+          }
+          aiRepaired = true;
+          extractedData.languageSource = 'GEMINI_AI';
+          console.log('[API/Extract] Gemini correction completed successfully.');
+        } catch (geminiErr: any) {
+          const errMsg = geminiErr.message || String(geminiErr);
+          const errStack = geminiErr.stack || "";
+          console.error('[API/Extract] Gemini correction failed with exception:', geminiErr);
+          console.error('[API/Extract] Exception stack trace:', errStack);
+
+          let errorDetail = "Unknown AI error";
+          if (errMsg.includes("aborted") || errMsg.includes("timeout") || geminiErr.name === "AbortError") {
+            errorDetail = "Timeout (exceeded 15s limit)";
+          } else if (errMsg.includes("API key not valid") || errMsg.includes("API_KEY_INVALID") || errMsg.includes("invalid api key")) {
+            errorDetail = "Invalid API Key (401)";
+          } else if (errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("429")) {
+            errorDetail = "Quota exceeded (429)";
+          } else if (errMsg.includes("permission") || errMsg.includes("403")) {
+            errorDetail = "Permission denied (403)";
+          } else if (errMsg.includes("not found") || errMsg.includes("404")) {
+            errorDetail = "Model not found (404)";
+          } else if (errMsg.includes("safety") || errMsg.includes("blocked")) {
+            errorDetail = "Safety block (blocked content)";
+          } else if (errMsg.includes("fetch failed") || errMsg.includes("network")) {
+            errorDetail = "Network error (cannot connect to Google)";
+          } else {
+            errorDetail = errMsg.replace(/\[GoogleGenerativeAI Error\]:\s*/, '').substring(0, 80);
+          }
+
+          aiWarning = `AI repair unavailable: ${errorDetail}. Standard language engine used.`;
+        }
       }
 
-      // ── COMMON CLEANUPS AND FORMATTING ───────────────
+      // ââ COMMON CLEANUPS AND FORMATTING âââââââââââââââ
       const rawLang = detectLanguageFromText(
         `${extractedData.localName || ''} ${extractedData.localAddress || ''}` || rawText
       );
 
       // Determine correct language based on the extracted local text
       let currentLang = rawLang;
-      
+
       // Only fallback to address-based state mapping if no local language is detected (english)
       if (currentLang === 'english' || currentLang === 'unknown') {
         currentLang = getLocalLanguageFromAddress(extractedData.address || '') || 'english';
       }
 
-      // Safety check: if the PDF explicitly contains Hindi specific slogans or labels, force Hindi (Devanagari).
-      // This ensures people living in non-Hindi states (e.g. Gujarat) with Hindi Aadhaars get Hindi PVC cards.
-      const hasHindiIndicators = rawText.includes('मेरा आधार') || 
-                                 rawText.includes('मेरी पहचान') || 
-                                 rawText.includes('जन्म तिथि');
-                                 
-      if (hasHindiIndicators && currentLang !== 'marathi') {
-        console.log('[LOCAL_LANG_DEBUG] Genuine Hindi Aadhaar card detected via indicators. Forcing target language to Hindi.');
-        currentLang = 'hindi';
+      // Check explicit slogans and indicators to identify genuine Marathi, Hindi, or Gujarati cards
+      const hasMarathiIndicators = rawText.includes('à¤®à¤¾à¤ à¥‡ à¤†à¤§à¤¾à¤°') || rawText.includes('àª®àª¾à¤ à«‡ àª†à¤§à¤¾à¤°') ||
+        rawText.includes('à¤®à¤¾à¤ à¥€ à¤“à¤³à¤–') || rawText.includes('àª®àª¾à¤ à«€ àª“à¤³à¤–') ||
+        rawText.includes('à¤®à¤¾à¤¹à¤¿à¤¤à¥€') || rawText.includes('àª®àª¾à¤¹à¤¿à¤¤àª¨àª¾') ||
+        rawText.includes('à¤¨à¤¾à¤—à¤°à¤¿à¤•à¤¤à¥ à¤µà¤¾à¤šà¤¾') || rawText.includes('àª¨à¤¾à¤—à¤°à¤¿à¤•à¤¤à« à¤µà¤¾');
+
+      // NOTE: 'à¤œà¤¨à¥ à¤® à¤¤à¤¿à¤¥à¤¿' deliberately removed — it appears on ALL Aadhaar PDFs including Gujarati cards.
+      // Only unique Hindi-only slogans are reliable Hindi indicators.
+      const hasHindiIndicators = rawText.includes('à¤®à¥‡à¤°à¤¾ à¤†à¤§à¤¾à¤°') ||
+        rawText.includes('à¤®à¥‡à¤°¥€ à¤ªà¤¹à¤šà¤¾à¤¨');
+
+      const hasGujaratiIndicators = rawText.includes('àª®àª¾àª°à«‹ àª†à¤§à¤¾à¤°') ||
+        rawText.includes('àª®àª¾àª°à«€ àª“à¤³à¤–') ||
+        /[\u0A80-\u0AFF]/.test(rawText);
+
+      // ── HIGHEST PRIORITY: Gujarati script or slogan check first ──
+      // If Gujarati script or slogans are present anywhere in rawText, trust Gujarati completely!
+      // National Devanagari headers (à¤­à¤¾à¤°à¤¤ à¤¸à¤°à¤•à¤¾à¤° etc.) are printed on ALL Aadhaar cards and must NOT block Gujarati detection.
+      if (hasGujaratiIndicators) {
+        console.log('[LOCAL_LANG_DEBUG] Genuine Gujarati Aadhaar card detected via script/slogan indicators (HIGHEST PRIORITY). Target language: Gujarati.');
+        currentLang = 'gujarati';
+      } else if (hasMarathiIndicators) {
+        console.log('[LOCAL_LANG_DEBUG] Genuine Marathi Aadhaar card detected via slogan indicators. Setting target language to Marathi.');
+        currentLang = 'marathi';
+      } else if (hasHindiIndicators && currentLang !== 'marathi' && currentLang !== 'gujarati') {
+        // Only override to Hindi when rawLang is ambiguous (not already a confident regional language)
+        const isAlreadyConfidentRegional = ['gujarati', 'tamil', 'telugu', 'kannada', 'malayalam', 'bengali', 'punjabi', 'odia', 'assamese'].includes(rawLang);
+        if (!isAlreadyConfidentRegional) {
+          console.log('[LOCAL_LANG_DEBUG] Genuine Hindi Aadhaar card detected via indicators. Forcing target language to Hindi.');
+          currentLang = 'hindi';
+        } else {
+          console.log(`[LOCAL_LANG_DEBUG] Hindi slogans present but rawLang=${rawLang} is a confident regional language — keeping regional lang.`);
+        }
       }
 
-      console.log(`[LOCAL_LANG_DEBUG] Raw detected language: ${rawLang} | State-based corrected language: ${currentLang}`);
+      // Priority Devanagari Check: Only run when no regional language was already confirmed above.
+      // Prevents national Devanagari headers (भारत सरकार on all cards) from overriding correctly
+      // detected Gujarati/Tamil/etc. cards.
+      const alreadyConfirmedRegional = ['gujarati', 'tamil', 'telugu', 'kannada', 'malayalam', 'bengali', 'punjabi', 'odia', 'assamese'].includes(currentLang);
+      if (!alreadyConfirmedRegional && /[\u0900-\u097F]/.test(`${extractedData.localName || ''} ${extractedData.localAddress || ''}`)) {
+        if (currentLang !== 'hindi') {
+          currentLang = 'marathi';
+        }
+      }
+
+      console.log(`[LOCAL_LANG_DEBUG] Raw detected language: ${rawLang} | Final language: ${currentLang}`);
+      extractedData.lang = currentLang;
 
       if (currentLang === 'english') {
         extractedData.localAddress = extractedData.address;
         extractedData.localName = '';
       }
 
-      // If correct language uses Devanagari script (Marathi/Hindi) but we have Gujarati script characters, shift them back
-      if ((currentLang === 'marathi' || currentLang === 'hindi' || currentLang === 'devanagari') && rawLang === 'gujarati') {
+      // ── LOCAL LANGUAGE SELECTION: QR CODE DIRECT & GEMINI AI SINGLE SOURCE OF TRUTH ──
+      let finalLocalName = extractedData.localName?.trim() || '';
+      let finalLocalAddress = extractedData.localAddress?.trim() || '';
+
+      // If local fields are missing or contain no Indic script, run Gemini AI Precision engine directly
+      if (currentLang !== 'english' && (!finalLocalName || !finalLocalAddress || !/[^\x00-\x7F]/.test(finalLocalName))) {
+        try {
+          const geminiApiKey = process.env.GEMINI_API_KEY || userGeminiApiKey;
+          const aiRes = await translateOrRepairWithAI({
+            nameEnglish: extractedData.name || '',
+            addressEnglish: extractedData.address || '',
+            localName: finalLocalName,
+            localAddress: finalLocalAddress
+          }, currentLang, geminiApiKey);
+
+          if (aiRes.localName) finalLocalName = aiRes.localName;
+          if (aiRes.localAddress) finalLocalAddress = aiRes.localAddress;
+        } catch (e: any) {
+          console.error('[Extract/Route] AI fallback translation error:', e.message);
+        }
+      }
+
+      extractedData.localName = finalLocalName;
+      extractedData.localAddress = finalLocalAddress;
+
+      // If language is Devanagari (Marathi/Hindi) but extracted text has subset-font shifted Gujarati codepoints, shift them back to Devanagari
+      if ((currentLang === 'marathi' || currentLang === 'hindi' || currentLang === 'devanagari') &&
+        (rawLang === 'gujarati' || /[\u0A80-\u0AFF]/.test(extractedData.localName || '') || /[\u0A80-\u0AFF]/.test(extractedData.localAddress || ''))) {
         console.log('[LOCAL_LANG_DEBUG] Correcting Gujarati script offset to Devanagari (Marathi/Hindi)');
         extractedData.localName = fixGujaratiToDevanagariShift(extractedData.localName || '');
         extractedData.localAddress = fixGujaratiToDevanagariShift(extractedData.localAddress || '');
@@ -2276,13 +1773,22 @@ Return ONLY a valid JSON object:
 
 
 
-      extractedData.dobLine           = getCorrectDobLine(extractedData.dob || '', currentLang);
-      extractedData.genderLine        = getCorrectGenderLine('', extractedData.gender || 'Male', currentLang);
+      extractedData.dobLine = getCorrectDobLine(extractedData.dob || '', currentLang);
+      extractedData.genderLine = getCorrectGenderLine('', extractedData.gender || 'Male', currentLang);
       extractedData.localAddressLabel = getCorrectAddressLabel(currentLang);
       console.log(`[API/Extract] COMMON_CLEANUPS: lang=${currentLang} dobLine="${extractedData.dobLine}"`);
 
-      // ── DICTIONARY-BASED AND AI-FALLBACK TRANSLATION/REPAIR FOR ALL LANGUAGES ──
-      if (currentLang !== 'english') {
+      // ââ DICTIONARY-BASED AND AI-FALLBACK TRANSLATION FOR MISSING FIELDS ONLY ââ
+      // ── DICTIONARY-BASED AND AI-FALLBACK TRANSLATION & REPAIR FOR MISSING OR CORRUPTED LOCAL FIELDS ──
+      const checkRepair = detectLocalTextErrors({
+        nameEnglish: extractedData.name || '',
+        addressEnglish: extractedData.address || '',
+        localName: extractedData.localName || '',
+        localAddress: extractedData.localAddress || ''
+      }, currentLang);
+
+      if (currentLang !== 'english' && checkRepair.needsRepair) {
+        console.log(`[TranslationEngine] Indic text repair triggered for lang=${currentLang}. Reason: ${checkRepair.reason}`);
         try {
           const geminiApiKeyForTranslation = process.env.GEMINI_API_KEY || userGeminiApiKey;
           const result = await translateOrRepairWithAI({
@@ -2298,7 +1804,7 @@ Return ONLY a valid JSON object:
           if (result.localAddress) {
             extractedData.localAddress = result.localAddress;
           }
-          
+
           // Log token usage to Supabase if tokens were consumed
           if (result.tokensUsed) {
             try {
@@ -2323,45 +1829,22 @@ Return ONLY a valid JSON object:
         }
       }
 
-      // ── LOCAL LANGUAGE OVER-MODIFICATION VALIDATION (20% RULE) ────────────────
-      const renderedLocalName    = (extractedData.localName    || '').trim();
-      const renderedLocalAddress = (extractedData.localAddress || '').trim();
-      
-      let finalLocalName = renderedLocalName;
-      let finalLocalAddress = renderedLocalAddress;
-
-      if (currentLang !== 'english') {
-         const nameChangePct = calculateChangePercentage(originalLocalName, renderedLocalName);
-         if (nameChangePct > 55 && !aiRepaired) {
-             console.warn(`[LOCAL_LANG_DEBUG] FLAG LOCAL_LANGUAGE_OVER_MODIFIED: Name changed by ${nameChangePct.toFixed(1)}%. Falling back to original.`);
-             finalLocalName = originalLocalName;
-         }
-
-         const addrChangePct = calculateChangePercentage(originalLocalAddress, renderedLocalAddress);
-         if (addrChangePct > 55 && !aiRepaired) {
-             console.warn(`[LOCAL_LANG_DEBUG] FLAG LOCAL_LANGUAGE_OVER_MODIFIED: Address changed by ${addrChangePct.toFixed(1)}%. Falling back to original.`);
-             finalLocalAddress = originalLocalAddress;
-         }
+      // ââ LOCAL LANGUAGE PDF TEXT PRESERVATION ââââââââââââââââ
+      if (!extractedData.localName) {
+        extractedData.localName = originalLocalName || '';
+      }
+      if (!extractedData.localAddress) {
+        extractedData.localAddress = originalLocalAddress || '';
       }
 
+      // ââ ALIGN & LOG REPAIRS ââââââââââââââââââââââââââââââââââââââââââââââ
       if (currentLang !== 'english') {
-        if (!aiRepaired) {
-          finalLocalName = crossReferenceRepairLocalName(extractedData.name || '', finalLocalName, currentLang);
-        }
-        finalLocalAddress = repairLocalAddress(extractedData.address || '', finalLocalAddress, currentLang);
-      }
-
-      extractedData.localName = finalLocalName;
-      extractedData.localAddress = originalLocalAddress.trim() ? finalLocalAddress : '';
-
-      // ── ALIGN & LOG REPAIRS ──────────────────────────────────────────────
-      if (currentLang !== 'english') {
-         alignAndLogRepairs(originalLocalName, finalLocalName, currentLang).catch(err => {
-             console.error(`[LOCAL_REPAIR_LOG] Name alignment logging failed for ${currentLang}:`, err.message);
-         });
-         alignAndLogRepairs(originalLocalAddress, finalLocalAddress, currentLang).catch(err => {
-             console.error(`[LOCAL_REPAIR_LOG] Address alignment logging failed for ${currentLang}:`, err.message);
-         });
+        alignAndLogRepairs(originalLocalName, finalLocalName, currentLang).catch((err: any) => {
+          console.error(`[LOCAL_REPAIR_LOG] Name alignment logging failed for ${currentLang}:`, err.message);
+        });
+        alignAndLogRepairs(originalLocalAddress, finalLocalAddress, currentLang).catch((err: any) => {
+          console.error(`[LOCAL_REPAIR_LOG] Address alignment logging failed for ${currentLang}:`, err.message);
+        });
       }
 
       console.log(`
@@ -2390,19 +1873,17 @@ Final Repaired Addr:    ${extractedData.localAddress}
         // Use Gemini's data as primary, parser's data only as fallback
         extractedData = {
           ...extractedData,
-          // For name: prefer Gemini since it can distinguish person name from district/city
-          name: aiData.name || extractedData.name,
-          dob: aiData.dob || extractedData.dob,
-          gender: aiData.gender || extractedData.gender,
-          documentNumber: aiData.pmjayId || extractedData.documentNumber,
-          // For vid (ABHA number): parser's regex is reliable, Gemini as fallback
+          name: (extractedData.name && extractedData.name.trim().split(/\s+/).length >= 2) ? extractedData.name.trim() : (aiData.name || extractedData.name),
+          dob: extractedData.dob || aiData.dob,
+          gender: extractedData.gender || aiData.gender,
+          documentNumber: (extractedData.documentNumber && /^[A-Z0-9]{8,16}$/i.test(extractedData.documentNumber)) ? extractedData.documentNumber : (aiData.pmjayId || extractedData.documentNumber),
           vid: extractedData.vid || aiData.abhaNumber,
-          state: aiData.state || extractedData.state,
-          district: aiData.district || extractedData.district,
-          village: aiData.village || extractedData.village,
-          subdivision: aiData.subdivision || extractedData.subdivision,
-          mobile: aiData.mobile || extractedData.mobile,
-          rationId: aiData.rationId || extractedData.rationId,
+          state: extractedData.state || aiData.state,
+          district: extractedData.district || aiData.district,
+          village: extractedData.village || aiData.village,
+          subdivision: extractedData.subdivision || aiData.subdivision,
+          mobile: extractedData.mobile || aiData.mobile,
+          rationId: extractedData.rationId || aiData.rationId,
         };
         console.log('[API/Extract] AYUSHMAN: Gemini extracted -', {
           name: aiData.name, pmjayId: aiData.pmjayId, state: aiData.state,
@@ -2411,7 +1892,7 @@ Final Repaired Addr:    ${extractedData.localAddress}
       } else {
         console.warn('[API/Extract] AYUSHMAN: Gemini extraction failed or unavailable. Using parser data as-is.');
       }
-      
+
       const originalName = (extractedData.name || '').trim();
       const originalDistrict = (extractedData.district || '').trim();
       const originalState = (extractedData.state || '').trim();
@@ -2493,7 +1974,7 @@ Final Repaired Addr:    ${extractedData.localAddress}
               console.error('[API/Extract] Failed to log Ayushman repair tokens to Supabase:', dbErr.message);
             }
           }
-          
+
           aiRepaired = true;
           console.log('[API/Extract] Gemini correction completed successfully for Ayushman.');
         } catch (geminiErr: any) {
@@ -2501,7 +1982,7 @@ Final Repaired Addr:    ${extractedData.localAddress}
           const errStack = geminiErr.stack || "";
           console.error('[API/Extract] Gemini correction failed for Ayushman with exception:', geminiErr);
           console.error('[API/Extract] Exception stack trace:', errStack);
-          
+
           let errorDetail = "Unknown AI error";
           if (errMsg.includes("aborted") || errMsg.includes("timeout") || geminiErr.name === "AbortError") {
             errorDetail = "Timeout (exceeded 15s limit)";
@@ -2520,7 +2001,7 @@ Final Repaired Addr:    ${extractedData.localAddress}
           } else {
             errorDetail = errMsg.replace(/\[GoogleGenerativeAI Error\]:\s*/, '').substring(0, 80);
           }
-          
+
           aiWarning = `AI repair unavailable: ${errorDetail}. Standard language engine used.`;
         }
       }
@@ -2533,6 +2014,8 @@ Final Repaired Addr:    ${extractedData.localAddress}
         documentNumber: aiData.uan || extractedData.documentNumber,
         mobile: aiData.mobile || extractedData.mobile,
         address: aiData.address || extractedData.address,
+        frontCardBase64: extractedData.frontCardBase64,
+        backCardBase64: extractedData.backCardBase64,
       };
     } else if (docType === 'ABHA' && aiData) {
       extractedData = {
@@ -2557,7 +2040,7 @@ Final Repaired Addr:    ${extractedData.localAddress}
         fatherNameLocal: aiData.fatherNameLocalScript || (extractedData as any).fatherNameLocal || '',
         assemblyConstituency: aiData.assemblyConstituency || (extractedData as any).assemblyConstituency || '',
       };
-      
+
       // Perform local repairs on local fields for VOTER cards
       const currentLang = detectLanguageFromText(
         `${extractedData.localName || ''} ${extractedData.localAddress || ''} ${extractedData.fatherNameLocal || ''}`
@@ -2588,21 +2071,18 @@ Final Repaired Addr:    ${extractedData.localAddress}
         }
       }
     }
-    
+
     if (docType === 'VOTER' && extractedData.voterCropDebug?.status === 'FAILED') {
-      console.error('[API/Extract] Voter card extraction failed: border is missing or clipped');
-      return NextResponse.json({
-        error: 'Voter card border detection failed. More than 2 pixels of card border are missing or clipped.'
-      }, { status: 400 });
+      console.warn('[API/Extract] Voter card border verification warning. Proceeding with cropped result.');
     }
-    
+
     if (docType === 'ABHA' && (extractedData.abhaCropError || !extractedData.frontCardBase64 || !extractedData.backCardBase64)) {
       console.error('[API/Extract] ABHA card extraction failed:', extractedData.abhaCropError || 'missing card images');
       return NextResponse.json({
         error: 'Card region not detected'
       }, { status: 400 });
     }
-    
+
     console.log('[API/Extract] Success:', {
       name: extractedData.name,
       dob: extractedData.dob,
@@ -2622,7 +2102,7 @@ Final Repaired Addr:    ${extractedData.localAddress}
       console.log(`[API/Extract] RESPONSE_SENT (time: ${Date.now()}, elapsed: ${Date.now() - apiStartTime}ms)`);
     }
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       data: {
         ...extractedData,
         decryptedPdfBase64,
