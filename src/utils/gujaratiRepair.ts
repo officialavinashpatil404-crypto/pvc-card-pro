@@ -14,6 +14,9 @@ export function repairGujaratiText(
   // 1. Remove hidden control characters
   let cleaned = text.replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
 
+  // Specific repair for Dindoli and similar common subset-font corruptions
+  cleaned = cleaned.replace(/ડિ[-–—]ડોલી/g, 'ડિંડોલી');
+
   // 2. Safe space-healing: join orphaned matras caused by PDF text rendering (e.g. "શ િ વ" -> "શિવ")
   const combiningPattern = "[\\u0A81-\\u0A83\\u0ABC-\\u0ACD\\u0AE2-\\u0AE3]";
   cleaned = cleaned.replace(new RegExp('(?<=\\S)\\s(' + combiningPattern + ')(?=\\S)', 'g'), '$1');

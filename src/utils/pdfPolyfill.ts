@@ -1,3 +1,5 @@
+import { pathToFileURL } from 'url';
+
 // Polyfill browser globals for Node.js / Vercel Serverless environment so pdfjs-dist / pdf-parse runs cleanly without throwing DOMMatrix error
 
 if (typeof globalThis.DOMMatrix === 'undefined') {
@@ -56,12 +58,21 @@ if (typeof globalThis.Path2D === 'undefined') {
   };
 }
 
-try {
-  const pdfjs = require('pdfjs-dist/legacy/build/pdf.mjs');
-  const pdfWorker = require('pdfjs-dist/legacy/build/pdf.worker.mjs');
-  if (pdfjs?.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerPort = pdfWorker;
+const setupPdfWorker = (pdfjsModule: string, workerModule: string) => {
+  try {
+    const pdfjs = require(pdfjsModule);
+    const fs = require('fs');
+    const workerPath = require.resolve(workerModule);
+    if (fs.existsSync(workerPath) && pdfjs?.GlobalWorkerOptions) {
+      pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+    }
+  } catch (e) {
+    console.warn(`[pdfPolyfill] Failed to set workerSrc for ${pdfjsModule}:`, (e as any)?.message);
   }
-} catch (e) {}
+};
+
+setupPdfWorker('pdfjs-dist/legacy/build/pdf.mjs', 'pdfjs-dist/legacy/build/pdf.worker.mjs');
+setupPdfWorker('pdfjs-dist', 'pdfjs-dist/build/pdf.worker.mjs');
 
 export {};
+

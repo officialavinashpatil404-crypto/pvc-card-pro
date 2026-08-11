@@ -12,8 +12,8 @@ const nextConfig: any = {
       './public/fonts/**/*'
     ],
   },
-  transpilePackages: ['puppeteer', 'pdfjs-dist'],
-  serverExternalPackages: ['@sparticuz/chromium', 'puppeteer-core', 'sharp'],
+  transpilePackages: ['puppeteer'],
+  serverExternalPackages: ['@sparticuz/chromium', 'puppeteer-core', 'sharp', 'pdfjs-dist', 'pdf-parse'],
   typescript: {
     ignoreBuildErrors: true,
   },

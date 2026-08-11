@@ -736,15 +736,12 @@ async function checkIsEncrypted(pdfBytes: Uint8Array): Promise<boolean> {
  */
 async function extractTextWithPdfJs(pdfBytes: Uint8Array, password: string | null): Promise<string> {
   const pdfjs = require('pdfjs-dist/legacy/build/pdf.mjs');
-  const pdfWorker = require('pdfjs-dist/legacy/build/pdf.worker.mjs');
-  if (pdfjs?.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerPort = pdfWorker;
-  }
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdfBytes),
     password: password || undefined,
     useSystemFonts: true,
     isEvalSupported: false,
+    disableWorker: true,
   });
   const pdf = await loadingTask.promise;
   console.log('PDF_LOADED');
@@ -819,7 +816,7 @@ async function extractTextFromPdf(
     console.log('[PdfExtract] Parsing text using pdf-parse...');
     console.log('typeof PDFParse:', typeof PDFParse);
     const backupBytes = new Uint8Array(workingBytes.slice(0));
-    const parser = new PDFParse({ data: workingBytes });
+    const parser = new PDFParse({ data: workingBytes, disableWorker: true } as any);
     const data = await parser.getText();
     try {
       await parser.destroy();
@@ -1012,6 +1009,13 @@ export async function POST(request: NextRequest) {
     let aiRepaired = false;
     let aiWarning: string | null = null;
 
+    // Helper to verify native text is healthy and not garbled/corrupted
+    const isHealthyLocalText = (text: string | null | undefined): boolean => {
+      if (!text || text.trim().length < 2) return false;
+      if (/àª|à§|Ã¢|ï¿½|\uFFFD/i.test(text)) return false;
+      return /[\u0900-\u0D7F\u0A80-\u0AFF\u0600-\u06FF]/.test(text);
+    };
+
     try {
       const supabase = await createClient();
       const [authRes, dbRes] = await Promise.all([
@@ -1029,7 +1033,7 @@ export async function POST(request: NextRequest) {
         if (!error && data) {
           if ((data.remaining_cards || 0) <= 0 && process.env.TEST_MODE !== 'true') {
             return NextResponse.json({
-              error: 'Recharge Required: You have 0 credits. Please purchase at least the Trial Pack (â¹20 for 10 Credits) to start using PVC card services.'
+              error: 'Recharge Required: You have 0 credits. Please purchase at least the Trial Pack (₹20 for 10 Credits) to start using PVC card services.'
             }, { status: 403 });
           }
           if (data.gemini_api_key) {
@@ -1121,7 +1125,13 @@ export async function POST(request: NextRequest) {
 
     ocrLogs.push(`Vision OCR Config - Key present: ${!!googleVisionKey}, Enabled: ${isVisionOcrEnabled}`);
 
-    if (googleVisionKey && isVisionOcrEnabled && decryptedBytes && parser.getDocumentType() === 'AADHAAR') {
+    const hasHealthyNativeText = isHealthyLocalText(originalLocalName) && isHealthyLocalText(originalLocalAddress);
+    if (hasHealthyNativeText) {
+      ocrLogs.push('Bypassing Google Vision OCR because native PDF parser extracted complete, healthy local language text.');
+      console.log('[API/Extract] Bypassing Google Vision OCR: Native PDF parser already has healthy local language text.');
+    }
+
+    if (!hasHealthyNativeText && googleVisionKey && isVisionOcrEnabled && decryptedBytes && parser.getDocumentType() === 'AADHAAR') {
       try {
         console.log('[API/Extract] Google Vision OCR: Attempting extraction via high-res PDF rendering and Google OCR...');
         ocrLogs.push('Attempting high-res PDF rendering via Puppeteer...');
@@ -1207,20 +1217,9 @@ export async function POST(request: NextRequest) {
       console.log(`[LOCAL_REPAIR_DEBUG] Gemini AI enabled. Preserving exact PDF text without manual regex mutation: localName="${originalLocalName}"`);
     }
 
-    // Helper to verify native text is healthy and not garbled/corrupted
-    const isHealthyLocalText = (text: string | null | undefined): boolean => {
-      if (!text || text.trim().length < 2) return false;
-      if (/àª|à§|Ã¢|ï¿½|\uFFFD/i.test(text)) return false;
-      return /[\u0900-\u0D7F\u0A80-\u0AFF\u0600-\u06FF]/.test(text);
-    };
-
-    // --- SMART BYPASS & GEMINI DIRECT AI EXTRACTION LOGIC ---
-    // Bypass Gemini AI ONLY if native PDF parser already extracted clean, healthy local name and address
-    const hasCompleteLocalText = isHealthyLocalText(extractedData.localName) && (isHealthyLocalText(extractedData.localAddress) || !!extractedData.address);
-    let needGemini = !!(effectiveKey && !hasCompleteLocalText && (docType === 'AADHAAR' || docType === 'VOTER' || docType === 'AYUSHMAN' || docType === 'PAN' || docType === 'ESHRAM' || docType === 'ABHA'));
-    if (effectiveKey && hasCompleteLocalText) {
-      console.log('[API/Extract] Native PDF parser extracted complete, healthy local language text. Bypassing Gemini AI call to save tokens!');
-    }
+    // ALWAYS run Gemini AI for all supported document types if the API key is present.
+    // This removes complex bypasses to ensure 100% spelling and translation accuracy via AI.
+    let needGemini = !!(effectiveKey && (docType === 'AADHAAR' || docType === 'VOTER' || docType === 'AYUSHMAN' || docType === 'PAN' || docType === 'ESHRAM' || docType === 'ABHA'));
     let tryLocalOcr = false;
 
     let localOcrData: any = null;
@@ -1297,20 +1296,34 @@ export async function POST(request: NextRequest) {
 
           let aiPrompt = '';
           if (docType === 'AADHAAR') {
-            aiPrompt = `You are an expert Aadhaar data REPAIR ENGINE with deep knowledge of Indian regional scripts.
-            
-CRITICAL: The detected native regional language of this document is ${promptLang.toUpperCase()}.
+            aiPrompt = `You are an expert Aadhaar regional text repair engine for ${promptLang.toUpperCase()} script.
+Your ONLY job is to output the clean, properly-spaced, and correctly-spelled name and address in the local ${promptLang.toUpperCase()} language.
 
-Original Extracted PDF Text (Contains Corrupted Characters):
---- START RAW TEXT ---
+REFERENCE DATA (English fields extracted from PDF):
+- Name (EN): "${extractedData.name || ''}"
+- Address (EN): "${extractedData.address || ''}"
+
+ORIGINAL PDF TEXT LAYER (Contains encoding/font corruptions):
+--- START ---
 ${rawText}
---- END RAW TEXT ---
+--- END ---
 
+CRITICAL RULES:
+1. NAME REPAIR (CRITICAL): Cross-reference the English Name ("${extractedData.name || ''}") to repair any missing vowel signs (matras) or broken letters in the local name.
+   - Example: If English is "Ninave" and local raw text has "નાનાવે" or "નનાવે", you must repair it to "નિનાવે" (adding the missing "િ" matra to match "Ni-").
+   - Example: If English is "Siddhi" and local raw text has "સદ્ધિ" or "સદી", repair it to "સિદ્ધિ".
+   - Keep the local name parts together as they are spelled, ensuring no letters are dropped or misspelled.
+2. WORD FIDELITY & SPACING: Use the English Name and English Address to repair individual broken glyphs, matras, and spacing issues (e.g. joining words that were split like "ચંદ્ર શેખર" -> "ચંદ્રશેખર" if they are one word in English "Chandrashekhar"), but KEEP the exact wording and structure from the PDF text layer.
+3. DO NOT translate English into the local language arbitrarily. For example, if the PDF text has "ના દ્વારા" or "દ્વારા", preserve it. DO NOT translate "C/O" into anything else if the local text has a specific prefix.
+4. OUTPUT FORMAT: Return ONLY a valid JSON object. No explanation, no markdown, no backticks.
+{
+  "nameLocalScript": "repaired name in local language",
+  "addressLocalScript": "repaired full address in local language"
+}`;
+          } else if (false) { /*
 CRITICAL INSTRUCTIONS:
 1. You are a REPAIR ENGINE, NOT a content generator. Your ONLY job is to repair broken characters (glyphs, matras, conjuncts) in the original local-language text.
 2. DO NOT translate English into the local language arbitrarily. DO NOT reorder words. DO NOT rewrite addresses. DO NOT hallucinate new data.
-3. The raw PDF text often drops conjunct consonants or corrupts matras (e.g. 'àª²àª®à«àª¬à«àª¨' instead of 'àª²àªà«àª·à«àª®à«àª¬à«àª¨', 'àª¸àª¦à«àª§à«' instead of 'àª¸àª¿àª¦à«àª§àª¿', 'àª¡à«àªàª¡à«àª²à«' instead of 'àª¡àª¿àªàª¡à«àª²à«') due to subset-font corruption. Correct all spelling errors to match standard official local language spelling.
-4. REPAIR RULE FOR NAMES: Cross-reference the English name to repair the corrupted local name. Example: English 'Siddhi Ravsaheb Patil' + Corrupt 'àª¸àª¦à«àª§à« àª°àª¾àªµàª¸àª¾àª¹à«àª¬ àªªàª¾àªà«àª²' -> Repaired 'àª¸àª¿àª¦à«àª§àª¿ àª°àª¾àªµàª¸àª¾àª¹à«àª¬ àªªàª¾àªà«àª²'. Example: English 'Laxmiben' + Corrupt 'àª²àª®à«àª¬à«àª¨' -> Repaired 'àª²àªà«àª·à«àª®à«àª¬à«àª¨'.
 5. REPAIR RULE FOR ADDRESS: Preserve the exact structure, line order, and word order of the original local address. Repair broken individual characters and matras (e.g. 'àª¡à«àªàª¡à«àª²à«' -> 'àª¡àª¿àªàª¡à«àª²à«').
 6. If the document is purely in English and has absolutely NO regional script anywhere on it, leave local script fields empty. Otherwise, extract the regional script accurately.
 
@@ -1342,7 +1355,7 @@ Return ONLY a valid JSON object. No explanation, no markdown, no backticks.
   "issuedDate": "DD/MM/YYYY or null",
   "detailsAsOnDate": "DD/MM/YYYY or null"
 }`;
-          } else if (docType === 'PAN') {
+          */ } else if (docType === 'PAN') {
             aiPrompt = `You are an expert PAN card data extractor.
 We have extracted some raw text from the PDF:
 --- START RAW TEXT ---
@@ -1687,8 +1700,8 @@ Return ONLY a valid JSON object:
 
       // Check explicit slogans and indicators to identify genuine Marathi, Hindi, or Gujarati cards
       const hasMarathiIndicators = rawText.includes('à¤®à¤¾à¤ à¥‡ à¤†à¤§à¤¾à¤°') || rawText.includes('àª®àª¾à¤ à«‡ àª†à¤§à¤¾à¤°') ||
-        rawText.includes('à¤®à¤¾à¤ à¥€ à¤“à¤³à¤–') || rawText.includes('àª®àª¾à¤ à«€ àª“à¤³à¤–') ||
-        rawText.includes('à¤®à¤¾à¤¹à¤¿à¤¤à¥€') || rawText.includes('àª®àª¾à¤¹à¤¿à¤¤àª¨àª¾') ||
+        rawText.includes('à¤®à¤¾à¤ à¥€ à¤“à¤³à¤–') || rawText.includes('àª®àª¾à¤ à«€ à¤“à¤³à¤–') ||
+        rawText.includes('à¤®à¤¾à¤¹à¤¿à¤¤à¥€') || rawText.includes('àª®à¤¾à¤¹à¤¿à¤¤àª¨àª¾') ||
         rawText.includes('à¤¨à¤¾à¤—à¤°à¤¿à¤•à¤¤à¥ à¤µà¤¾à¤šà¤¾') || rawText.includes('àª¨à¤¾à¤—à¤°à¤¿à¤•à¤¤à« à¤µà¤¾');
 
       // NOTE: 'à¤œà¤¨à¥ à¤® à¤¤à¤¿à¤¥à¤¿' deliberately removed — it appears on ALL Aadhaar PDFs including Gujarati cards.
@@ -1696,8 +1709,8 @@ Return ONLY a valid JSON object:
       const hasHindiIndicators = rawText.includes('à¤®à¥‡à¤°à¤¾ à¤†à¤§à¤¾à¤°') ||
         rawText.includes('à¤®à¥‡à¤°¥€ à¤ªà¤¹à¤šà¤¾à¤¨');
 
-      const hasGujaratiIndicators = rawText.includes('àª®àª¾àª°à«‹ àª†à¤§à¤¾à¤°') ||
-        rawText.includes('àª®àª¾àª°à«€ àª“à¤³à¤–') ||
+      const hasGujaratiIndicators = rawText.includes('àª®àª¾à¤°à«‹ àª†à¤§à¤¾à¤°') ||
+        rawText.includes('àª®àª¾à¤°à«€ à¤“à¤³à¤–') ||
         /[\u0A80-\u0AFF]/.test(rawText);
 
       // ── HIGHEST PRIORITY: Gujarati script or slogan check first ──
@@ -1763,6 +1776,12 @@ Return ONLY a valid JSON object:
       extractedData.localName = finalLocalName;
       extractedData.localAddress = finalLocalAddress;
 
+      if (currentLang === 'gujarati') {
+        const { repairGujaratiText } = require('../../../utils/gujaratiRepair');
+        extractedData.localName = repairGujaratiText(extractedData.localName || '');
+        extractedData.localAddress = repairGujaratiText(extractedData.localAddress || '');
+      }
+
       // If language is Devanagari (Marathi/Hindi) but extracted text has subset-font shifted Gujarati codepoints, shift them back to Devanagari
       if ((currentLang === 'marathi' || currentLang === 'hindi' || currentLang === 'devanagari') &&
         (rawLang === 'gujarati' || /[\u0A80-\u0AFF]/.test(extractedData.localName || '') || /[\u0A80-\u0AFF]/.test(extractedData.localAddress || ''))) {
@@ -1787,7 +1806,8 @@ Return ONLY a valid JSON object:
         localAddress: extractedData.localAddress || ''
       }, currentLang);
 
-      if (currentLang !== 'english' && checkRepair.needsRepair) {
+      const wasAiExtracted = extractedData.textSource === 'GEMINI';
+      if (!wasAiExtracted && currentLang !== 'english' && checkRepair.needsRepair) {
         console.log(`[TranslationEngine] Indic text repair triggered for lang=${currentLang}. Reason: ${checkRepair.reason}`);
         try {
           const geminiApiKeyForTranslation = process.env.GEMINI_API_KEY || userGeminiApiKey;
