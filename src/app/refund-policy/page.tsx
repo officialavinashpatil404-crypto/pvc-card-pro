@@ -18,6 +18,11 @@ export default function RefundPolicy() {
       <p className="font-body-md">
         If a transaction fails but money is deducted from your bank account, the amount is typically reversed by your bank within 5-7 business days. Please contact support@pvccardpro.com with your transaction ID if you experience issues.
       </p>
+
+      <h2 className="font-headline-md mt-lg">4. Business Entity Information</h2>
+      <p className="font-body-md">
+        Rapid PVC is operated by Avinash Naval Patil (Proprietorship, India). Legal Name: Avinash Naval Patil.
+      </p>
     </div>
   );
 }

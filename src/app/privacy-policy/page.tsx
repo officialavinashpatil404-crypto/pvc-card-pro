@@ -19,9 +19,9 @@ export default function PrivacyPolicy() {
         All payments are securely processed by Cashfree. Rapid PVC does not store or process your credit card numbers, UPI IDs, or bank account details.
       </p>
 
-      <h2 className="font-headline-md mt-lg">4. Contact Us</h2>
+      <h2 className="font-headline-md mt-lg">4. Business Operator & Contact Us</h2>
       <p className="font-body-md">
-        If you have any questions about this Privacy Policy, please contact us at support@pvccardpro.com.
+        Rapid PVC is operated by Avinash Naval Patil (Proprietorship, India). Legal Name: Avinash Naval Patil. If you have any questions about this Privacy Policy, please contact us at support@pvccardpro.com.
       </p>
     </div>
   );

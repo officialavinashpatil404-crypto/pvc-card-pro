@@ -477,17 +477,73 @@ export default function Home() {
 
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <footer className={`border-t py-12 px-4 sm:px-6 transition-colors ${
-        isDark ? 'bg-slate-950 border-slate-800 text-slate-500' : 'bg-slate-900 text-slate-400 border-slate-800'
+        isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-900 text-slate-300 border-slate-800'
       }`}>
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-300">Rapid PVC Pro</span> &bull; &copy; {new Date().getFullYear()} All rights reserved.
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "Organization",
+              "name": "Rapid PVC",
+              "legalName": "Avinash Naval Patil",
+              "description": "Rapid PVC is an online PVC card generation and document processing service for customers in India.",
+              "address": {
+                "@type": "PostalAddress",
+                "addressCountry": "IN"
+              }
+            })
+          }}
+        />
+        <div className="max-w-7xl mx-auto space-y-8">
+          {/* Main Footer Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-xs pb-8 border-b border-slate-800">
+            {/* Column 1: Service Description */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-emerald-500 to-indigo-600 flex items-center justify-center text-white font-bold">
+                  <span className="material-symbols-outlined text-[18px]">badge</span>
+                </div>
+                <span className="text-base font-bold text-white tracking-tight">Rapid PVC</span>
+              </div>
+              <p className="text-slate-400 leading-relaxed">
+                Rapid PVC is an online PVC card generation and document processing service for customers in India. Users can upload eligible documents and generate high-quality PVC card print-ready outputs through the web application.
+              </p>
+            </div>
+
+            {/* Column 2: Legal & Business Identity for Cashfree */}
+            <div className="space-y-2">
+              <h3 className="font-bold text-white text-xs uppercase tracking-wider">Business Information</h3>
+              <div className="space-y-1 text-slate-300">
+                <p className="font-bold text-white">Rapid PVC</p>
+                <p>Legal Name: <span className="text-white font-semibold">Avinash Naval Patil</span></p>
+                <p>Business Type: <span className="text-white font-semibold">Proprietorship</span></p>
+                <p>Country: <span className="text-white font-semibold">India</span></p>
+                <p className="pt-1 text-slate-400">Rapid PVC is operated by <strong className="text-slate-200">Avinash Naval Patil</strong>.</p>
+              </div>
+            </div>
+
+            {/* Column 3: Navigation Links */}
+            <div className="space-y-2">
+              <h3 className="font-bold text-white text-xs uppercase tracking-wider">Quick Links</h3>
+              <ul className="space-y-2 font-medium">
+                <li><Link href="/about" className="hover:text-white transition-colors">About Us</Link></li>
+                <li><Link href="/contact" className="hover:text-white transition-colors">Contact Us</Link></li>
+                <li><Link href="/privacy-policy" className="hover:text-white transition-colors">Privacy Policy</Link></li>
+                <li><Link href="/terms-conditions" className="hover:text-white transition-colors">Terms of Service</Link></li>
+                <li><Link href="/refund-policy" className="hover:text-white transition-colors">Refund Policy</Link></li>
+              </ul>
+            </div>
           </div>
-          <div className="flex items-center gap-6 font-medium">
-            <Link href="/privacy-policy" className="hover:text-slate-300">Privacy Policy</Link>
-            <Link href="/terms-conditions" className="hover:text-slate-300">Terms of Service</Link>
-            <Link href="/refund-policy" className="hover:text-slate-300">Refund Policy</Link>
-            <Link href="/contact" className="hover:text-slate-300">Contact Us</Link>
+
+          {/* Bottom Business Line */}
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-400">
+            <div>
+              Rapid PVC | Operated by <strong className="text-slate-200">Avinash Naval Patil</strong> | Proprietorship | India
+            </div>
+            <div>
+              &copy; {new Date().getFullYear()} Rapid PVC. All Rights Reserved.
+            </div>
           </div>
         </div>
       </footer>

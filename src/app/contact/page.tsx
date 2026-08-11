@@ -48,6 +48,31 @@ export default function ContactPage() {
           <button type="button" className="w-full py-sm bg-primary text-on-primary rounded-lg font-label-md hover:bg-primary/90 transition-colors">Submit</button>
         </form>
       </div>
+
+      <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-3 mt-lg">
+        <h2 className="text-lg font-bold text-slate-900 border-b border-slate-200/60 pb-2">Business Information</h2>
+        <p className="text-sm font-medium text-slate-700">
+          Rapid PVC is operated by <strong className="text-slate-900 font-semibold">Avinash Naval Patil</strong>.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm pt-2">
+          <div>
+            <span className="text-xs font-semibold uppercase text-slate-400 block">Business Name</span>
+            <span className="font-bold text-slate-900">Rapid PVC</span>
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase text-slate-400 block">Legal Name</span>
+            <span className="font-bold text-slate-900">Avinash Naval Patil</span>
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase text-slate-400 block">Business Type</span>
+            <span className="font-bold text-slate-900">Proprietorship</span>
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase text-slate-400 block">Country</span>
+            <span className="font-bold text-slate-900">India</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

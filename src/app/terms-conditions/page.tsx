@@ -23,6 +23,11 @@ export default function TermsConditions() {
       <p className="font-body-md">
         We strive for 99.9% uptime, but we do not guarantee continuous, uninterrupted access to the Rapid PVC generation engine.
       </p>
+
+      <h2 className="font-headline-md mt-lg">5. Business Entity Information</h2>
+      <p className="font-body-md">
+        Rapid PVC is operated by Avinash Naval Patil (Proprietorship, India). Legal Name: Avinash Naval Patil.
+      </p>
     </div>
   );
 }
