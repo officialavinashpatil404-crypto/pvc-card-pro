@@ -9,7 +9,8 @@ const nextConfig: any = {
   outputFileTracingIncludes: {
     '/api/**/*': [
       './node_modules/@sparticuz/chromium/bin/**',
-      './public/fonts/**/*'
+      './public/fonts/**/*',
+      './node_modules/pdfjs-dist/**'
     ],
   },
   transpilePackages: ['puppeteer'],

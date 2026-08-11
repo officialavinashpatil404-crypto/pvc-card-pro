@@ -72,6 +72,8 @@ const setupPdfWorker = (pdfjsModule: string, workerModule: string) => {
 };
 
 setupPdfWorker('pdfjs-dist/legacy/build/pdf.mjs', 'pdfjs-dist/legacy/build/pdf.worker.mjs');
+setupPdfWorker('pdfjs-dist/legacy/build/pdf.js', 'pdfjs-dist/legacy/build/pdf.worker.js');
+setupPdfWorker('pdfjs-dist/build/pdf.mjs', 'pdfjs-dist/build/pdf.worker.mjs');
 setupPdfWorker('pdfjs-dist', 'pdfjs-dist/build/pdf.worker.mjs');
 
 export {};
