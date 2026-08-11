@@ -27,17 +27,26 @@ function cachedFontBase64(fontPath: string): string {
 
 // Pre-warm fonts at module load (server startup) so first request is instant
 (function prewarmFonts() {
-  const fontsDir = path.resolve('./public/fonts');
-  try {
-    const files = fs.readdirSync(fontsDir);
-    for (const f of files) {
-      if (f.endsWith('.ttf') || f.endsWith('.otf')) {
-        cachedFontBase64(path.join(fontsDir, f));
+  const candidateDirs = [
+    path.join(process.cwd(), 'public', 'fonts'),
+    path.resolve('./public/fonts'),
+    path.join(__dirname, '..', '..', '..', '..', 'public', 'fonts'),
+  ];
+  for (const fontsDir of candidateDirs) {
+    try {
+      if (fs.existsSync(fontsDir)) {
+        const files = fs.readdirSync(fontsDir);
+        for (const f of files) {
+          if (f.endsWith('.ttf') || f.endsWith('.otf') || f.endsWith('.woff2')) {
+            cachedFontBase64(path.join(fontsDir, f));
+          }
+        }
+        console.log(`[FontCache] Pre-warmed ${FONT_CACHE.size} font(s) into memory from ${fontsDir}.`);
+        break;
       }
+    } catch (e: any) {
+      console.warn(`[FontCache] Could not pre-warm fonts from ${fontsDir}:`, e.message);
     }
-    console.log(`[FontCache] Pre-warmed ${FONT_CACHE.size} font(s) into memory.`);
-  } catch (e: any) {
-    console.warn('[FontCache] Could not pre-warm fonts:', e.message);
   }
 })();
 
@@ -422,7 +431,12 @@ export async function POST(request: NextRequest) {
     console.log(`FONT_APPLIED: ${fontId}`);
 
     try {
-      const fontsDir = path.join(process.cwd(), 'public', 'fonts');
+      const candidateDirs = [
+        path.join(process.cwd(), 'public', 'fonts'),
+        path.resolve('./public/fonts'),
+        path.join(__dirname, '..', '..', '..', '..', 'public', 'fonts'),
+      ];
+      const fontsDir = candidateDirs.find(d => fs.existsSync(d)) || candidateDirs[0];
       const regTtfPath = path.join(fontsDir, `${fontId}-Regular.ttf`);
       const boldTtfPath = path.join(fontsDir, `${fontId}-Bold.ttf`);
 
