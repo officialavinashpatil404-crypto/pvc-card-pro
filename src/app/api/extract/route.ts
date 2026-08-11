@@ -884,19 +884,19 @@ async function invokeUserGeminiRepair(
   }
 
   console.log(`[API/Extract] Gemini API key loaded: Yes (length=${apiKey.length})`);
-  console.log(`[API/Extract] Model name: gemini-2.5-flash`);
+  console.log(`[API/Extract] Model name: gemini-1.5-flash`);
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    console.warn('[API/Extract] Gemini request timed out (15s threshold reached). Aborting fetch...');
+    console.warn('[API/Extract] Gemini request timed out (5s threshold reached). Aborting fetch...');
     controller.abort();
-  }, 15000); // 15s timeout
+  }, 5000); // 5s timeout
 
   try {
     const model = genAI.getGenerativeModel(
-      { model: "gemini-2.5-flash" },
-      { timeout: 15000, signal: controller.signal } as any
+      { model: "gemini-1.5-flash" },
+      { timeout: 5000, signal: controller.signal } as any
     );
 
     const englishFields: Record<string, string> = {};
@@ -1281,7 +1281,7 @@ export async function POST(request: NextRequest) {
           console.log('[API/Extract] Gemini API key detected. Overriding text extraction with AI...');
           const genAI = new GoogleGenerativeAI(effectiveKey);
           const model = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash",
+            model: "gemini-1.5-flash",
             generationConfig: { responseMimeType: "application/json" }
           });
           console.log(`[API/Extract] AI extraction starting for document type: ${docType}`);

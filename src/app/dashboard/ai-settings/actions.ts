@@ -13,7 +13,7 @@ export async function validateGeminiKey(key: string) {
   
   try {
     const genAI = new GoogleGenerativeAI(key.trim());
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     // Make a minimal token request to test the key
     const result = await model.generateContent({
@@ -38,7 +38,7 @@ export async function validateGeminiKey(key: string) {
     } else if (errMsg.includes("quota") || errMsg.includes("limit")) {
       userFriendlyError = "API key works, but your Gemini API quota has been exceeded.";
     } else if (errMsg.includes("permission_denied") || errMsg.includes("access")) {
-      userFriendlyError = "Permission denied. Check if the model 'gemini-2.5-flash' is enabled for your key.";
+      userFriendlyError = "Permission denied. Check if the model 'gemini-1.5-flash' is enabled for your key.";
     }
     
     return { success: false, error: userFriendlyError };
