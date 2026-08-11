@@ -60,7 +60,10 @@ export async function cropAadhaarRegions(decryptedPdfBase64: string): Promise<Cr
               const pdf = await loadingTask.promise;
               const page = await pdf.getPage(1);
               
-              const viewport = page.getViewport({ scale: 4 }); // Render at 4x resolution
+              const renderScale = 2; // 2x resolution for 75% faster rendering
+              const s = renderScale / 4; // Scale ratio relative to legacy 4x baseline
+              
+              const viewport = page.getViewport({ scale: renderScale });
               const canvas = document.getElementById('pdf-canvas');
               const context = canvas.getContext('2d');
               canvas.width = viewport.width;
@@ -71,19 +74,18 @@ export async function cropAadhaarRegions(decryptedPdfBase64: string): Promise<Cr
               // Helper function to crop sub-regions from rendered page canvas
               const crop = (x, y, w, h) => {
                 const cropCanvas = document.getElementById('crop-canvas');
-                cropCanvas.width = w;
-                cropCanvas.height = h;
+                cropCanvas.width = Math.round(w);
+                cropCanvas.height = Math.round(h);
                 const cropCtx = cropCanvas.getContext('2d');
-                cropCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
+                cropCtx.drawImage(canvas, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, Math.round(w), Math.round(h));
                 return cropCanvas.toDataURL('image/png');
               };
 
-              // Dynamic Card Coordinates Scanner inside 4x rendered page canvas
+              // Dynamic Card Coordinates Scanner inside rendered page canvas
               const width = canvas.width;
               const height = canvas.height;
               
               // We scan the bottom portion of the canvas where the cards are located
-              // Broadened Saffron color range: R > 200, G: 100-190, B < 145 (to match both light/dark saffron)
               const startY = Math.floor(height * 0.6);
               const imgData = context.getImageData(0, startY, width, height - startY);
               const data = imgData.data;
@@ -102,76 +104,64 @@ export async function cropAadhaarRegions(decryptedPdfBase64: string): Promise<Cr
                 }
               }
               
-              let fx = 208;
-              let bx = 1238;
-              let fy = 2290;
-              let by = 2290;
-              const cw = 976;
-              const ch = 638;
+              let fx = 208 * s;
+              let bx = 1238 * s;
+              let fy = 2290 * s;
+              let by = 2290 * s;
+              const cw = 976 * s;
+              const ch = 638 * s;
               
-              if (saffronPixels.length > 100) {
+              if (saffronPixels.length > 50) {
                 const midX = width / 2;
                 const leftCluster = saffronPixels.filter(p => p.x < midX);
                 const rightCluster = saffronPixels.filter(p => p.x >= midX);
                 
                 const getTopLeft = (cluster, defaultX, defaultY) => {
-                  if (cluster.length < 50) return { x: defaultX, y: defaultY };
+                  if (cluster.length < 25) return { x: defaultX, y: defaultY };
                   
-                  // Sort by y coordinate to find the top edge of the tricolor band
                   cluster.sort((a, b) => a.y - b.y);
                   const minY = cluster[0].y;
                   
-                  // Gather all pixels near the top edge
-                  const topEdge = cluster.filter(p => p.y <= minY + 8);
+                  const topEdge = cluster.filter(p => p.y <= minY + (8 * s));
                   topEdge.sort((a, b) => a.x - b.x);
                   
-                  // Find the leftmost pixel on the top edge of the brush stroke
                   const minX = topEdge[0].x;
                   
                   return { x: minX, y: minY };
                 };
                 
-                // Saffron brush stroke begins at fixed offset ~212px relative to the card's left boundary
-                const leftCoord = getTopLeft(leftCluster, 420, 2290);
-                const rightCoord = getTopLeft(rightCluster, 1450, 2290);
+                const leftCoord = getTopLeft(leftCluster, 420 * s, 2290 * s);
+                const rightCoord = getTopLeft(rightCluster, 1450 * s, 2290 * s);
                 
-                fx = leftCoord.x - 212;
+                fx = leftCoord.x - (212 * s);
                 fy = leftCoord.y;
-                bx = rightCoord.x - 212;
+                bx = rightCoord.x - (212 * s);
                 by = rightCoord.y;
                 
-                // Dynamic coordinates safety check limits (revert to standard template if out of bounds)
-                if (fx < 100 || fx > 300 || fy < 2100 || fy > 2400) {
-                  console.log('Detected front card coords out of bounds, reverting to standard values');
-                  fx = 208;
-                  fy = 2290;
+                if (fx < 100 * s || fx > 300 * s || fy < 2100 * s || fy > 2400 * s) {
+                  fx = 208 * s;
+                  fy = 2290 * s;
                 }
-                if (bx < 1100 || bx > 1350 || by < 2100 || by > 2400) {
-                  console.log('Detected back card coords out of bounds, reverting to standard values');
-                  bx = 1238;
-                  by = 2290;
+                if (bx < 1100 * s || bx > 1350 * s || by < 2100 * s || by > 2400 * s) {
+                  bx = 1238 * s;
+                  by = 2290 * s;
                 }
-                
-                console.log('Dynamic saffron scanning matched card bounds:', { fx, fy, bx, by });
-              } else {
-                console.log('Dynamic saffron scanning failed to find card bounds, falling back to static coordinates.');
               }
               
-              // Swapped mapping: Front Card = right card (bx, by); Back Card = left card (fx, fy)
               const frontX = bx;
               const frontY = by;
               const backX = fx;
               const backY = fy;
 
               return {
-                frontHeader: crop(frontX, frontY, cw, 115),
-                frontWarning: crop(frontX + 190, frontY + 410, 750, 94), // height slightly smaller to prevent overlap
-                frontFooter: crop(frontX, frontY + ch - 78, cw, 78),
-                frontLeftStrip: crop(frontX, frontY, 32, ch),
-                backHeader: crop(backX, backY, cw, 115),
-                backFooter: crop(backX, backY + ch - 78, cw, 78),
-                backLeftStrip: crop(backX, backY, 32, ch),
-                backQRCode: crop(backX + 710, backY + 120, 240, 240), // crop QR code directly from high-res page canvas!
+                frontHeader: crop(frontX, frontY, cw, 115 * s),
+                frontWarning: crop(frontX + (190 * s), frontY + (410 * s), 750 * s, 94 * s),
+                frontFooter: crop(frontX, frontY + ch - (78 * s), cw, 78 * s),
+                frontLeftStrip: crop(frontX, frontY, 32 * s, ch),
+                backHeader: crop(backX, backY, cw, 115 * s),
+                backFooter: crop(backX, backY + ch - (78 * s), cw, 78 * s),
+                backLeftStrip: crop(backX, backY, 32 * s, ch),
+                backQRCode: crop(backX + (710 * s), backY + (120 * s), 240 * s, 240 * s),
                 frontCardFull: crop(frontX, frontY, cw, ch),
                 backCardFull: crop(backX, backY, cw, ch)
               };
