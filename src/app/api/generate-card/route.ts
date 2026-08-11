@@ -322,6 +322,8 @@ export async function POST(request: NextRequest) {
 
     let localFontReg = '';
     let localFontBold = '';
+    let devanagariReg = '';
+    let devanagariBold = '';
     let localFontType = 'ttf';
     let serifReg = '';
     let serifBold = '';
@@ -442,6 +444,9 @@ export async function POST(request: NextRequest) {
 
       localFontReg = cachedFontBase64(regTtfPath);
       localFontBold = cachedFontBase64(boldTtfPath);
+
+      devanagariReg = cachedFontBase64(path.join(fontsDir, 'NotoSansDevanagari-Regular.ttf'));
+      devanagariBold = cachedFontBase64(path.join(fontsDir, 'NotoSansDevanagari-Bold.ttf'));
 
       serifReg = cachedFontBase64(path.join(fontsDir, 'NotoSerif-Regular.ttf'));
       serifBold = cachedFontBase64(path.join(fontsDir, 'NotoSerif-Bold.ttf'));
@@ -607,6 +612,8 @@ export async function POST(request: NextRequest) {
         qrBase64,
         localFontReg,
         localFontBold,
+        devanagariReg,
+        devanagariBold,
         localFontType,
         localFontFamily: fontFamily,
         serifReg,
@@ -1047,6 +1054,20 @@ function generateAadhaarPVCHTML(params: any): string {
       font-display: block;
     }
     @font-face {
+      font-family: 'NotoSansDevanagari-Regular';
+      src: url('data:font/ttf;base64,${params.devanagariReg || params.localFontReg}') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: 'NotoSansDevanagari-Bold';
+      src: url('data:font/ttf;base64,${params.devanagariBold || params.localFontBold}') format('truetype');
+      font-weight: bold;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
       font-family: 'NotoSerif-Regular';
       src: url('data:font/ttf;base64,${params.serifReg}') format('truetype');
       font-weight: normal;
@@ -1088,7 +1109,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 150px;
       top: 28px;
       width: 560px;
-      font-family: '${params.localFontFamily}-Regular', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 34px;
       font-weight: normal;
       color: #000000;
@@ -1103,7 +1124,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 150px;
       top: 83px;
       width: 560px;
-      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 26px;
       font-weight: normal;
       color: #000000;
@@ -1176,7 +1197,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 242px;
       top: 250px;
       width: 730px;
-      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 26.5px;
       font-weight: normal;
       color: #000000;
@@ -1189,7 +1210,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 242px;
       top: 289px;
       width: 730px;
-      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 26.5px;
       font-weight: normal;
       color: #000000;
@@ -1202,7 +1223,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 242px;
       top: 328px;
       width: 730px;
-      font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 26.5px;
       font-weight: normal;
       color: #000000;
@@ -1223,7 +1244,7 @@ function generateAadhaarPVCHTML(params: any): string {
     }
 
     .warning-local {
-      font-family: '${params.localFontFamily}-Bold', sans-serif;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', sans-serif;
       font-size: 15.5px;
       font-weight: 700;
       color: #000000;
@@ -1400,7 +1421,7 @@ function generateAadhaarPVCHTML(params: any): string {
       position: absolute;
       left: 44px;
       top: 145px;
-      font-family: '${params.localFontFamily}-Bold', sans-serif;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', sans-serif;
       font-size: 25px;
       font-weight: bold;
       color: #000000;
@@ -1412,7 +1433,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 44px;
       top: 178px;
       width: 660px;
-      font-family: '${params.localFontFamily}-Regular', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 27px;
       color: #000000;
       line-height: 1.35;
