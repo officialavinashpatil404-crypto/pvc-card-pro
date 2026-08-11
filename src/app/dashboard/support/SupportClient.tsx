@@ -197,23 +197,7 @@ export default function SupportClient({ initialTickets }: SupportClientProps) {
             <div className="space-y-md">
               <a 
                 className="flex items-center gap-md p-md rounded-xl hover:bg-surface-container-high/50 transition-all border border-transparent hover:border-outline-variant/30 group" 
-                href="https://wa.me/919876543210"
-                target="_blank"
-                rel="noreferrer"
-              >
-                <div className="w-12 h-12 bg-secondary/10 rounded-full flex items-center justify-center text-secondary">
-                  <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>chat</span>
-                </div>
-                <div className="flex-grow">
-                  <p className="font-label-md text-label-md text-on-surface">WhatsApp Support</p>
-                  <p className="font-body-sm text-body-sm text-on-surface-variant">+91 98765 43210</p>
-                </div>
-                <span className="material-symbols-outlined text-outline group-hover:text-primary transition-colors">open_in_new</span>
-              </a>
-              
-              <a 
-                className="flex items-center gap-md p-md rounded-xl hover:bg-surface-container-high/50 transition-all border border-transparent hover:border-outline-variant/30 group" 
-                href="mailto:support@pvccardpro.in"
+                href="mailto:support@pvccardpro.com"
               >
                 <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center text-primary">
                   <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>mail</span>

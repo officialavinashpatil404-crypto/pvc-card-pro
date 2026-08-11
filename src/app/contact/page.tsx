@@ -15,18 +15,10 @@ export default function ContactPage() {
           </div>
           
           <div className="bg-surface-container-low p-md rounded-xl border border-outline-variant/30 flex items-center gap-md">
-            <span className="material-symbols-outlined text-secondary text-[32px]">call</span>
-            <div>
-              <p className="font-label-md">Phone Support</p>
-              <p className="font-body-md text-on-surface-variant">+91 98765 43210 (Mon-Sat, 10 AM - 6 PM)</p>
-            </div>
-          </div>
-          
-          <div className="bg-surface-container-low p-md rounded-xl border border-outline-variant/30 flex items-center gap-md">
             <span className="material-symbols-outlined text-tertiary text-[32px]">location_on</span>
             <div>
               <p className="font-label-md">Office Address</p>
-              <p className="font-body-md text-on-surface-variant">Tech Park, Sector 45, New Delhi, India 110001</p>
+              <p className="font-body-md text-on-surface-variant">Dindoli, Surat, Gujarat, India 394210</p>
             </div>
           </div>
         </div>
