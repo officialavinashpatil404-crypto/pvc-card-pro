@@ -693,14 +693,36 @@ export class AadhaarParser extends BaseParser {
              const compressedBuf = Buffer.from(binData.slice(compressedIndex));
              try {
                const unzipped = isGzip ? zlib.gunzipSync(compressedBuf) : zlib.unzipSync(compressedBuf);
-               xmlString = unzipped.toString('utf-8');
-               console.log('[AadhaarParser] QR_XML_EXTRACTED: Successfully decompressed Secure QR XML');
+               const unzippedStr = unzipped.toString('utf-8');
+               // Check if decompressed data is the XML-based QR format
+               if (unzippedStr.includes('<PrintLetterBarcodeData') || unzippedStr.includes('<?xml')) {
+                 xmlString = unzippedStr;
+                 console.log('[AadhaarParser] QR_XML_EXTRACTED: Successfully decompressed Secure QR XML');
+               } else {
+                 // Try UIDAI Secure QR binary (0xFF delimiter) format — post-2018 Aadhaar
+                 console.log('[AadhaarParser] Decompressed QR is not XML — trying 0xFF binary delimiter format...');
+                 const binaryParsed = this.parseSecureQRBinary(unzipped);
+                 if (binaryParsed) {
+                   this.qrData = binaryParsed;
+                   console.log('[AadhaarParser] QR_BINARY_PARSED: Successfully parsed UIDAI Secure QR binary format');
+                   return binaryParsed;
+                 } else {
+                   // Last resort: treat raw unzipped data as XML
+                   xmlString = unzippedStr;
+                   console.log('[AadhaarParser] QR_BINARY_FALLBACK: Binary parse failed, trying raw bytes as XML');
+                 }
+               }
              } catch (zipErr: any) {
                console.error('[AadhaarParser] Decompression failed:', zipErr.message);
              }
            } else {
              const text = code.data;
-             console.log('[AadhaarParser] QR data is neither plain XML nor compressed stream. Raw preview: ' + text.substring(0, 100));
+             // Detect legacy numeric-encoded QR (Big Integer / Base-10 format, pre-2018)
+             if (/^\d+$/.test(text.trim())) {
+               console.log('[AadhaarParser] Legacy numeric Secure QR detected (Base-10 Big Integer, pre-2018). Length: ' + text.length + '. Falling back to text-layer extraction.');
+             } else {
+               console.log('[AadhaarParser] QR data is neither plain XML nor compressed stream. Raw preview: ' + text.substring(0, 100));
+             }
            }
          }
         
@@ -728,6 +750,116 @@ export class AadhaarParser extends BaseParser {
     await this.extractAssets();
     await this.decodeQRCode();
     return this.extractedQR;
+  }
+
+  /**
+   * Parses UIDAI Secure QR binary (0xFF delimiter) format — post-2018 Aadhaar.
+   * After gzip decompression, fields are separated by 0xFF byte in a fixed UIDAI-defined order.
+   * All text fields are decoded as UTF-8, preserving Devanagari, Gujarati, Tamil, Bengali etc.
+   * exactly as UIDAI encoded them — zero AI/OCR required.
+   */
+  private parseSecureQRBinary(data: Buffer): any | null {
+    try {
+      // JPEG magic bytes 0xFF 0xD8 0xFF mark start of embedded photo — stop text parsing there
+      let photoStart = -1;
+      for (let i = 0; i < data.length - 2; i++) {
+        if (data[i] === 0xFF && data[i + 1] === 0xD8 && data[i + 2] === 0xFF) {
+          photoStart = i;
+          break;
+        }
+      }
+
+      // Only split text fields from the portion before the photo
+      const textPortion = photoStart > 0 ? data.slice(0, photoStart) : data;
+
+      // Split by 0xFF delimiter
+      const fields: string[] = [];
+      let fieldStart = 0;
+      for (let i = 0; i <= textPortion.length; i++) {
+        if (i === textPortion.length || textPortion[i] === 0xFF) {
+          const fieldBytes = textPortion.slice(fieldStart, i);
+          // UTF-8 decode — this is why regional scripts come out perfect with no AI
+          fields.push(Buffer.from(fieldBytes).toString('utf-8').replace(/\x00/g, '').trim());
+          fieldStart = i + 1;
+        }
+      }
+
+      console.log(`[AadhaarParser] QR binary: Split into ${fields.length} fields (photoStart=${photoStart})`);
+
+      if (fields.length < 5) {
+        console.warn('[AadhaarParser] QR binary: Only ' + fields.length + ' fields — not a valid Secure QR binary format');
+        return null;
+      }
+
+      // UIDAI Secure QR field order (0-indexed):
+      // 0: Email/Mobile present flag
+      // 1: Reference ID (4-digit Aadhaar suffix + timestamp)
+      // 2: Name (English)
+      // 3: Date of Birth
+      // 4: Gender
+      // 5: Care of (C/O)
+      // 6: District
+      // 7: Landmark
+      // 8: House
+      // 9: Location
+      // 10: Pincode
+      // 11: Post Office
+      // 12: State
+      // 13: Sub-district
+      // 14: VTC (Village/Town/City)
+      // 15: Local Name in regional script (newer Aadhaar)
+      // 16: Local Address in regional script (newer Aadhaar)
+      const parsed: any = {
+        name:    fields[2]  || null,
+        dob:     fields[3]  || null,
+        gender:  fields[4]  || null,
+        co:      fields[5]  || null,
+        dist:    fields[6]  || null,
+        lm:      fields[7]  || null,
+        house:   fields[8]  || null,
+        loc:     fields[9]  || null,
+        pc:      fields[10] || null,
+        po:      fields[11] || null,
+        state:   fields[12] || null,
+        subdist: fields[13] || null,
+        vtc:     fields[14] || null,
+        uid:     fields[1]  ? fields[1].substring(0, 4) : null,
+      };
+
+      // Extract local name (field 15) — regional language name in correct Unicode
+      if (fields.length > 15 && fields[15] && /[^\x00-\x7F]/.test(fields[15])) {
+        parsed.lname = fields[15];
+        console.log(`[AadhaarParser] QR binary: Local Name (lname) at field[15]: "${fields[15].substring(0, 40)}"`);
+      }
+
+      // Extract local address (field 16) — regional language address in correct Unicode
+      if (fields.length > 16 && fields[16] && /[^\x00-\x7F]/.test(fields[16])) {
+        parsed.laddress = fields[16];
+        console.log(`[AadhaarParser] QR binary: Local Address (laddress) at field[16]: "${fields[16].substring(0, 60)}"`);
+      }
+
+      // Fallback scan: if lname/laddress not in expected positions, scan fields 15-20
+      if (!parsed.lname || !parsed.laddress) {
+        for (let i = 15; i < Math.min(fields.length, 22); i++) {
+          const f = fields[i];
+          if (!f || !/[^\x00-\x7F]/.test(f)) continue;
+          if (!parsed.lname) {
+            parsed.lname = f;
+            console.log(`[AadhaarParser] QR binary: Local Name found via scan at field[${i}]: "${f.substring(0, 40)}"`);
+          } else if (!parsed.laddress) {
+            parsed.laddress = f;
+            console.log(`[AadhaarParser] QR binary: Local Address found via scan at field[${i}]: "${f.substring(0, 60)}"`);
+            break;
+          }
+        }
+      }
+
+      console.log(`[AadhaarParser] QR binary RESULT: name="${parsed.name}" dob="${parsed.dob}" gender="${parsed.gender}" lname="${parsed.lname || '(none)'}" laddress="${(parsed.laddress || '(none)').substring(0, 30)}"`);
+      return parsed;
+    } catch (err: any) {
+      console.error('[AadhaarParser] parseSecureQRBinary failed:', err.message);
+      return null;
+    }
   }
 
   /**
