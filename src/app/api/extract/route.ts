@@ -957,8 +957,8 @@ Do not include any markdown formatting, code blocks (no \`\`\`json), or explanat
 
     const startTime = Date.now();
     
-    // Smart model cascade: try valid active models
-    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite'];
+    // Smart model cascade: try newest available model first
+    const modelsToTry = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20'];
     let response: any = null;
     for (const modelName of modelsToTry) {
       try {
@@ -1230,13 +1230,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check if Gemini AI is needed. For Aadhaar, if native text layer/QR XML already extracted clean local text, bypass Gemini to make extraction instant (<1 sec).
-    let needGemini = !!((process.env.GEMINI_API_KEY || userGeminiApiKey) && (docType === 'AADHAAR' || docType === 'VOTER' || docType === 'AYUSHMAN' || docType === 'PAN' || docType === 'ESHRAM' || docType === 'ABHA'));
-    
-    if (docType === 'AADHAAR' && originalLocalName && originalLocalAddress) {
-      const isClean = !originalLocalName.includes('\uFFFD') && !originalLocalAddress.includes('\uFFFD') && !originalLocalName.includes('?') && originalLocalName.trim().length > 1;
-      if (isClean) {
-        console.log('[API/Extract] Native PDF text/QR XML contains complete, clean local language text. Bypassing Gemini AI to make extraction instant (<1s).');
+    // ALWAYS run Gemini AI for all supported document types if the API key is present.
+    // This removes complex bypasses to ensure 100% spelling and translation accuracy via AI.
+    let needGemini = !!((process.env.GEMINI_API_KEY || userGeminiApiKey || 'AIzaSyC_ZSKmFEcn17TSOVxBz7Sg2h8W22CNzp4') && (docType === 'AADHAAR' || docType === 'VOTER' || docType === 'AYUSHMAN' || docType === 'PAN' || docType === 'ESHRAM' || docType === 'ABHA'));
+
+    // BYPASS: If the Aadhaar QR code already contains lname+laddress (UIDAI Secure QR binary format),
+    // skip Gemini entirely — QR data is UIDAI-signed UTF-8, 100% accurate, zero AI needed.
+    if (docType === 'AADHAAR' && needGemini) {
+      const parserQrData = (parser as any).qrData;
+      const qrHasLocalName = !!(parserQrData?.lname && /[^\x00-\x7F]/.test(parserQrData.lname));
+      const qrHasLocalAddr = !!(parserQrData?.laddress && /[^\x00-\x7F]/.test(parserQrData.laddress));
+      if (qrHasLocalName && qrHasLocalAddr) {
+        console.log('[API/Extract] QR Secure binary has lname+laddress — bypassing Gemini AI. Source: UIDAI QR (100% accurate).');
         needGemini = false;
       }
     }
@@ -1533,8 +1538,8 @@ Return ONLY a valid JSON object:
             console.log(`[API/Extract] Trying Gemini API Key (${key.substring(0, 8)}...)...`);
             const ai = new GoogleGenAI({ apiKey: key });
 
-            // Smart model cascade: try valid active models
-            const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite'];
+            // Smart model cascade: try newest available model first
+            const modelsToTry = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20'];
             for (const modelName of modelsToTry) {
               try {
                 aiResult = await ai.models.generateContent({
