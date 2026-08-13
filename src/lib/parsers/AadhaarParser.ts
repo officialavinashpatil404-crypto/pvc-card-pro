@@ -863,6 +863,76 @@ export class AadhaarParser extends BaseParser {
   }
 
   /**
+   * Decodes UIDAI legacy numeric Secure QR (pre-2018).
+   * UIDAI encoded the compressed payload as a large Base-10 integer string.
+   * We convert it to bytes using native BigInt, find the gzip header, decompress,
+   * and parse local-language fields — ZERO AI needed, works fully offline.
+   */
+  private decodeNumericQR(numericStr: string): any | null {
+    try {
+      console.log('[AadhaarParser] Numeric QR: Converting decimal string to bytes using BigInt...');
+      // Convert big decimal string → BigInt → byte array (big-endian)
+      let num = BigInt(numericStr);
+      const byteArr: number[] = [];
+      const ZERO = BigInt(0);
+      const MASK_FF = BigInt(0xFF);
+      const EIGHT = BigInt(8);
+      while (num > ZERO) {
+        byteArr.unshift(Number(num & MASK_FF));
+        num >>= EIGHT;
+      }
+      const rawBytes = Buffer.from(byteArr);
+      console.log(`[AadhaarParser] Numeric QR: Decoded to ${rawBytes.length} bytes`);
+
+      // Find gzip (0x1f 0x8b) or zlib (0x78 0x9c/0xda/0x01) magic bytes
+      let compressedIndex = -1;
+      let isGzip = false;
+      for (let i = 0; i < rawBytes.length - 1; i++) {
+        if (rawBytes[i] === 0x1f && rawBytes[i + 1] === 0x8b) {
+          compressedIndex = i; isGzip = true; break;
+        } else if (rawBytes[i] === 0x78 && (rawBytes[i + 1] === 0x9c || rawBytes[i + 1] === 0xda || rawBytes[i + 1] === 0x01)) {
+          compressedIndex = i; isGzip = false; break;
+        }
+      }
+
+      if (compressedIndex === -1) {
+        console.warn('[AadhaarParser] Numeric QR: No compressed payload found in decoded bytes');
+        return null;
+      }
+
+      console.log(`[AadhaarParser] Numeric QR: Compressed payload at byte[${compressedIndex}] isGzip=${isGzip}`);
+      const compressedBuf = rawBytes.slice(compressedIndex);
+      const unzipped = isGzip ? zlib.gunzipSync(compressedBuf) : zlib.unzipSync(compressedBuf);
+      const unzippedStr = unzipped.toString('utf-8');
+
+      // Try XML format (most common for pre-2018 cards)
+      if (unzippedStr.includes('<PrintLetterBarcodeData') || unzippedStr.includes('<?xml')) {
+        const attrRegex = /([a-zA-Z0-9_]+)="([^"]*)"/g;
+        const parsedData: any = {};
+        let m;
+        while ((m = attrRegex.exec(unzippedStr)) !== null) {
+          parsedData[m[1]] = m[2];
+        }
+        console.log(`[AadhaarParser] Numeric QR → XML parsed: name="${parsedData.name}" lname="${parsedData.lname || '(none)'}"`);
+        return parsedData;
+      }
+
+      // Try 0xFF binary format
+      const binaryParsed = this.parseSecureQRBinary(unzipped);
+      if (binaryParsed) {
+        console.log('[AadhaarParser] Numeric QR → 0xFF binary parsed');
+        return binaryParsed;
+      }
+
+      console.warn('[AadhaarParser] Numeric QR: Decompressed data matched neither XML nor binary format');
+      return null;
+    } catch (err: any) {
+      console.error('[AadhaarParser] decodeNumericQR failed:', err.message);
+      return null;
+    }
+  }
+
+  /**
    * Returns true if the PDF text has significant local-language (Indic script) content
    * beyond the standard government headers printed on ALL Aadhaar cards.
    * Threshold: ≥30 Devanagari chars (Hindi/Marathi body text) OR ≥10 of any other regional script.
