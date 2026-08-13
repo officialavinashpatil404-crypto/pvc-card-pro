@@ -175,7 +175,7 @@ export async function cropAadhaarRegions(decryptedPdfBase64: string): Promise<Cr
       </html>
     `;
 
-    await page.setContent(htmlContent);
+    await page.setContent(htmlContent, { waitUntil: 'domcontentloaded', timeout: 10000 });
     await page.waitForFunction(() => (window as any).jsLoaded === true, { timeout: 10000 });
     
     console.log('[pdfRenderer] Calling renderAndCrop in page context...');

@@ -14,8 +14,8 @@ export async function validateGeminiKey(key: string) {
   try {
     const ai = new GoogleGenAI({ apiKey: key.trim() });
     
-    // Try models in order of preference (newest first)
-    const modelsToTry = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    // Try valid Gemini models in order of preference (newest valid first)
+    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite'];
     let responseText = '';
     let modelWorked = '';
     
