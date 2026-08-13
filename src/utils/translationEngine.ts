@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { learnFromTranslation, translateOfflineWithLearning } from './selfLearningEngine';
 import { createClient } from '@/utils/supabase/server';
 
@@ -114,6 +114,10 @@ export function transliterateWord(word: string): string {
  * Translates a complete English address or name using dictionary lookup and phonetic fallback.
  */
 export function translateOrRepairAddress(englishText: string, rawLocalText: string): string {
+  if (rawLocalText && rawLocalText.trim().length > 3 && /[^\x00-\x7F]/.test(rawLocalText)) {
+    const { repairGujaratiText } = require('./gujaratiRepair');
+    return repairGujaratiText(rawLocalText);
+  }
   if (!englishText) return rawLocalText || '';
 
   // Step 1: Clean and standardize the English text
@@ -279,16 +283,7 @@ export async function translateOrRepairWithAI(
   console.log(`[TranslationEngine] Executing Precision Indic Text Repair for ${targetLang}`);
 
   try {
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0,
-        topP: 1,
-        topK: 1
-      }
-    });
+    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 
     const langDisplayNames: Record<string, string> = {
       'gujarati': 'Gujarati (ગુજરાતી)',
@@ -317,24 +312,25 @@ INPUT DATA:
 
 STRICT RULES:
 1. WORD SPACING (CRITICAL): PDF text extraction often merges adjacent words together without spaces. You MUST insert proper spaces between words in Raw Local Name and Raw Local Address based on English word boundaries.
-   Examples:
+   Examples (Gujarati / Hindi):
    - "અવિનાશનવલ પાટીલ" -> "અવિનાશ નવલ પાટીલ" (insert space between Avinash and Naval)
-   - "રામીપાકપાસે" -> "રામી પાર્ક પાસે" (insert spaces between Rami, Park, and Pasa)
-   - "સુરતસીટી" -> "સુરત સિટી" (insert space between Surat and City)
+   - "અવિનાશનવલપાટિલ" -> "અવિનાશ નવલ પાટિલ"
+   - "રામીપાકપાસે" -> "રામી પાર્ક પાસે" | "रामपार्ककेपास" -> "राम पार्क के पास"
+   - "સુરતસીટી" -> "સુરત સિટી" | "वाराणसीसिटी" -> "वाराणसी सिटी"
 
-2. SPELLING & MATRA CORRECTION (CRITICAL): Document text extraction frequently corrupts Indic spelling, drops matras (short-i િ vs long-i ી, anusvara ં), or breaks conjunct consonants. Cross-reference Name (EN) and Address (EN) with the Raw Local fields to repair dropped matras while ALWAYS PRESERVING the exact authentic spelling from the original PDF.
+2. SPELLING & MATRA CORRECTION (CRITICAL): Document text extraction frequently corrupts Indic spelling, drops matras (short-i િ/ि vs long-i ી/ी, anusvara ં/ं), or breaks conjunct consonants. Cross-reference Name (EN) and Address (EN) with the Raw Local fields to repair dropped matras while ALWAYS PRESERVING the exact authentic spelling from the original PDF.
    Examples:
    - English Name: "Ninave Bhagawati Chandrashekhar" + PDF Local (missing matra): "નનાવે ભગવતી ચંદ્રશેખર" -> Corrected: "નિનાવે ભગવતી ચંદ્રશેખર"
-   - English Address: "Dindoli" + PDF Local (missing matra & anusvara): "ડડોલી" -> Corrected: "ડીંડોલી"
+   - English Address: "Dindoli" + PDF Local (missing matra & anusvara): "ડડોલી" -> Corrected: "ડીંડોલી" | "वाराणसी" + PDF Local: "वारणसी" -> Corrected: "वाराणसी"
    - English Name: "Siddhi Ravsaheb Patil" + PDF Local: "સિધ્ધી રાવસાહેબ પાટીલ" -> Preserve exact PDF spelling: "સિધ્ધી રાવસાહેબ પાટીલ" (DO NOT change "સિધ્ધી" to "સિદ્ધિ")
    - English Name: "Laxmiben" + Corrupted Local: "લમીબેન" -> Corrected: "લક્ષ્મીબેન"
-   - "ગોવધનનગર" -> "ગોવર્ધન નગર"
-   - "શીવાલક્સક્વેર" -> "શિવાલિક સ્ક્વેર"
+   - "ગોવધનનગર" -> "ગોવર્ધન નગર" | "गोवधननगर" -> "गोवर्धन नगर"
+   - "શીવાલક્સક્વેર" -> "શિવાલિક સ્ક્વેર" | "शिवालकस्क्वेयर" -> "शिवालिक स्क्वायर"
 
 3. WORD FIDELITY & LOANWORDS:
    - PRESERVE the exact authentic local words, place names, and character choices from the original PDF document. DO NOT alter valid original spellings (e.g. keep "સિધ્ધી", do not change to "સિદ્ધિ"; keep "સ્ક્વેર", DO NOT change to "ચોક"; keep "રોડ", DO NOT change to "માર્ગ").
    - Fix missing matras and dropped conjuncts so the local text phonetically and visually matches the original PDF name/address.
-   - Keep relationship markers like "S/O", "W/O", "D/O", "C/O" or local prefixes ("આત્મજ:", "પત્ની:", "પુત્રી:", "કેર ઓફ:", "द्वारा:") consistent.
+   - Keep relationship markers like "S/O", "W/O", "D/O", "C/O" or local prefixes ("આત્મજ:", "પત્ની:", "પુત્રી:", "કેર ઓફ:", "आत्मज:", "पति:", "पुत्र:", "निवासी:", "केयर ऑफ:", "द्वारा:") consistent.
 
 4. IF MISSING:
    - If Raw Local Name is completely empty, transliterate Name (EN) phonetically to ${langName}.
@@ -342,17 +338,39 @@ STRICT RULES:
 
 Return ONLY valid JSON: {"localName": "...", "localAddress": "..."}`;
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Gemini API timeout after 15000ms')), 15000)
-    );
+    // Smart model cascade: try newest available model first
+    const modelsToTry = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20'];
+    const geminiConfig = {
+      responseMimeType: "application/json" as const,
+      temperature: 0,
+      topP: 1,
+      topK: 1
+    };
 
-    const response = await Promise.race([
-      model.generateContent([aiPrompt]),
-      timeoutPromise
-    ]) as any;
+    let response: any = null;
+    for (const modelName of modelsToTry) {
+      try {
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Gemini API timeout after 15000ms')), 15000)
+        );
+        response = await Promise.race([
+          ai.models.generateContent({
+            model: modelName,
+            contents: [{ role: 'user', parts: [{ text: aiPrompt }] }],
+            config: geminiConfig
+          }),
+          timeoutPromise
+        ]);
+        console.log(`[TranslationEngine] Model used: ${modelName}`);
+        break;
+      } catch (modelErr: any) {
+        console.warn(`[TranslationEngine] Model ${modelName} failed: ${modelErr.message?.substring(0, 80)}`);
+      }
+    }
+    if (!response) throw new Error('All Gemini models failed in TranslationEngine');
 
-    const text = response.response.text();
-    const parsed = JSON.parse(text.trim());
+    const text = response.text;
+    const parsed = JSON.parse((text || '').trim());
     
     const finalLocalName = parsed.localName || fields.localName;
     const finalLocalAddress = parsed.localAddress || fields.localAddress;
@@ -391,11 +409,11 @@ Return ONLY valid JSON: {"localName": "...", "localAddress": "..."}`;
 
     // Get token usage metadata from response
     let tokensUsed = undefined;
-    if (response.response.usageMetadata) {
+    if (response.usageMetadata) {
       tokensUsed = {
-        input: response.response.usageMetadata.promptTokenCount || 0,
-        output: response.response.usageMetadata.candidatesTokenCount || 0,
-        total: response.response.usageMetadata.totalTokenCount || 0
+        input: response.usageMetadata.promptTokenCount || 0,
+        output: response.usageMetadata.candidatesTokenCount || 0,
+        total: response.usageMetadata.totalTokenCount || 0
       };
     }
 

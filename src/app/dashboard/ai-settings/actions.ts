@@ -2,7 +2,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { encrypt, decrypt } from "@/utils/crypto";
 
 /**
@@ -12,16 +12,27 @@ export async function validateGeminiKey(key: string) {
   if (!key) return { success: false, error: "API Key is required" };
   
   try {
-    const genAI = new GoogleGenerativeAI(key.trim());
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const ai = new GoogleGenAI({ apiKey: key.trim() });
     
-    // Make a minimal token request to test the key
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: "Respond with only the word OK." }] }],
-      generationConfig: { maxOutputTokens: 5 }
-    });
+    // Try models in order of preference (newest first)
+    const modelsToTry = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    let responseText = '';
+    let modelWorked = '';
     
-    const responseText = result.response.text().trim();
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [{ role: 'user', parts: [{ text: "Respond with only the word OK." }] }],
+          config: { maxOutputTokens: 5 }
+        });
+        responseText = (response.text || '').trim();
+        modelWorked = modelName;
+        break;
+      } catch (modelErr: any) {
+        continue; // try next model
+      }
+    }
     if (responseText.toUpperCase().includes("OK") || responseText.length > 0) {
       return { success: true };
     }
@@ -33,12 +44,12 @@ export async function validateGeminiKey(key: string) {
     let userFriendlyError = "Verification failed. Please check your internet connection or API Key status.";
     const errMsg = (err.message || "").toLowerCase();
     
-    if (errMsg.includes("api_key_invalid") || errMsg.includes("invalid api key") || errMsg.includes("api key not valid")) {
+    if (errMsg.includes("api_key_invalid") || errMsg.includes("invalid api key") || errMsg.includes("api key not valid") || errMsg.includes("unauthorized")) {
       userFriendlyError = "Invalid API Key. Please verify the key and try again.";
-    } else if (errMsg.includes("quota") || errMsg.includes("limit")) {
+    } else if (errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("429")) {
       userFriendlyError = "API key works, but your Gemini API quota has been exceeded.";
-    } else if (errMsg.includes("permission_denied") || errMsg.includes("access")) {
-      userFriendlyError = "Permission denied. Check if the model 'gemini-1.5-flash' is enabled for your key.";
+    } else if (errMsg.includes("permission_denied") || errMsg.includes("access") || errMsg.includes("403")) {
+      userFriendlyError = "Permission denied. Check if the Gemini API is enabled for your project.";
     }
     
     return { success: false, error: userFriendlyError };

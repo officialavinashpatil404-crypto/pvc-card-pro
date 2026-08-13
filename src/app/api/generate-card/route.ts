@@ -151,6 +151,46 @@ function cleanIndianText(text: string | undefined, aggressive: boolean = false):
   cleaned = cleaned.replace(new RegExp('(?<=\\S)\\s(' + allIndicCombining + ')(?=\\S)', 'g'), '$1');
   cleaned = cleaned.replace(/([\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D])\s+(?=\S)/g, '$1');
 
+  // Heal common Devanagari broken word spaces caused by PDF font encoding (handles pre/post halant cleaning)
+  cleaned = cleaned
+    .replace(/उत्\s*त\s*र/g, 'उत्तर')
+    .replace(/उत्त\s*र/g, 'उत्तर')
+    .replace(/प्र\s*दे\s*श/g, 'प्रदेश')
+    .replace(/प्र\s*देश/g, 'प्रदेश')
+    .replace(/उत्तर\s*प्रदेश/g, 'उत्तर प्रदेश')
+    .replace(/उत्तर\s*प्र\s*देश/g, 'उत्तर प्रदेश')
+    .replace(/उत्त\s*र\s*प्र\s*दे\s*श/g, 'उत्तर प्रदेश')
+    .replace(/उत्त\s*र\s*प्र\s*देश/g, 'उत्तर प्रदेश')
+    .replace(/म\s*ध्य\s*प्र\s*दे\s*श/g, 'मध्य प्रदेश')
+    .replace(/मध्य\s*प्रदेश/g, 'मध्य प्रदेश')
+    .replace(/हि\s*मा\s*च\s*ल/g, 'हिमाचल')
+    .replace(/हिमाचल\s*प्रदेश/g, 'हिमाचल प्रदेश')
+    .replace(/रा\s*ज\s*स्\s*था\s*न/g, 'राजस्थान')
+    .replace(/राज\s*स्थान/g, 'राजस्थान')
+    .replace(/छ\s*त्\s*ती\s*स\s*ग\s*ढ़/g, 'छत्तीसगढ़')
+    .replace(/झा\s*र\s*खं\s*ड/g, 'झारखंड')
+    .replace(/उत्\s*त\s*रा\s*खं\s*ड/g, 'उत्तराखंड')
+    .replace(/बौ\s*ध\s*न्\s*सा\s*पु\s*र/g, 'बुढ़न्सापुर')
+    .replace(/बु\s*ढ़\s*न्\s*सा\s*पु\s*र/g, 'बुढ़न्सापुर')
+    .replace(/बू\s*ढ़\s*न्\s*सा\s*पु\s*र/g, 'बूढ़न्सापुर')
+    .replace(/बू\s*ढ़\s*न्सापुर/g, 'बूढ़न्सापुर')
+    .replace(/बु\s*र्\s*हं\s*स\s*पु\s*र/g, 'बुर्हंसपुर')
+    .replace(/बु\s*र्हंसपुर/g, 'बुर्हंसपुर')
+    .replace(/नी\s*भा\s*पु\s*र/g, 'नीभापुर')
+    .replace(/नी\s*भापुर/g, 'नीभापुर')
+    .replace(/जौ\s*न\s*पु\s*र/g, 'जौनपुर')
+    .replace(/जौ\s*नपुर/g, 'जौनपुर')
+    .replace(/ब\s*हा\s*दु\s*र/g, 'बहादुर')
+    .replace(/बहादु\s*र/g, 'बहादुर')
+    .replace(/बहा\s*दुर/g, 'बहादुर')
+    .replace(/रं\s*ग/g, 'रंग')
+    .replace(/रंग\s*ब\s*हा\s*दु\s*र/g, 'रंग बहादुर')
+    .replace(/रंग\s*बहादु\s*र/g, 'रंग बहादुर')
+    .replace(/आ\s*त्\s*म\s*ज/g, 'आत्मज')
+    .replace(/आत्म\s*ज/g, 'आत्मज');
+
+  cleaned = cleaned.replace(/\s+([,.:;!?])/g, '$1');
+
   if (aggressive) {
     cleaned = cleaned.replace(/([\u0900-\u0D7F])\s+(?=[\u0900-\u0D7F])/g, '$1');
   }
@@ -313,10 +353,13 @@ export async function POST(request: NextRequest) {
     localAddress = fixLocalCoPrefix(localAddress, address);
     console.log(`[CO_FIX] localAddress after C/O fix: "${localAddress}"`);
 
-    const hasLocalLanguage = !!(localName?.trim() && localAddress?.trim());
-    const upperAddress = hasLocalLanguage ? localAddress : address;
+    const hasLocalName = !!(localName && localName.trim());
+    const hasLocalAddress = !!(localAddress && localAddress.trim());
+    const hasLocalLanguage = hasLocalName || hasLocalAddress;
+
+    const upperAddress = hasLocalAddress ? localAddress : address;
     const lowerAddress = address;
-    const upperAddressLabel = hasLocalLanguage ? (localAddressLabel || 'Address:') : 'Address:';
+    const upperAddressLabel = hasLocalAddress ? (localAddressLabel || 'Address:') : 'Address:';
 
     const aadhaarNum = documentNumber || 'XXXX XXXX XXXX';
 
@@ -594,16 +637,16 @@ export async function POST(request: NextRequest) {
 
       htmlTemplate = generateAadhaarPVCHTML({
         name,
-        localName: hasLocalLanguage ? localName : '',
-        dobLine: hasLocalLanguage ? dobLine : dobLine,
+        localName: hasLocalName ? localName : '',
+        dobLine: dobLine,
         genderLine,
         mobile,
         aadhaarNum,
         vid,
         localAddressLabel: upperAddressLabel,
-        localAddress: upperAddress,
+        localAddress: hasLocalAddress ? localAddress : '',
         address: lowerAddress,
-        hasLocalLanguage,
+        hasLocalLanguage: hasLocalAddress,
         issueDate,
         detailsAsOn,
         frontTemplateBase64: curFrontTemplate,
@@ -811,9 +854,9 @@ function generateAadhaarPVCHTML(params: any): string {
   const mobile = params.mobile ? `Mob: ${params.mobile}` : '';
   const aadhaarNum = params.aadhaarNum || '';
   const vid = params.vid || '';
-  const localAddress = params.localAddress || '';
-  const address = params.address || '';
-  const hasLocalLanguage = !!params.hasLocalLanguage;
+  const localAddress = params.localAddress || params.addressUpper || '';
+  const address = params.address || params.addressLower || '';
+  const hasLocalLanguage = params.hasLocalLanguage !== undefined ? params.hasLocalLanguage : !!(localAddress && localAddress.trim());
   const isBaalAadhaar = !!params.isBaalAadhaar;
   const issueDate = params.issueDate || '';
   const detailsAsOn = params.detailsAsOn || '';
@@ -839,9 +882,9 @@ function generateAadhaarPVCHTML(params: any): string {
   let displayLocalAddressLabel = CANONICAL_MAP[langKey] || params.localAddressLabel || 'Address:';
   let renderEnglishAddress = true;
 
-  if (!displayLocalAddress.trim()) {
+  if (!displayLocalAddress || displayLocalAddress === address.trim()) {
     displayLocalAddress = address;
-    displayLocalAddressLabel = "Address:";
+    displayLocalAddressLabel = CANONICAL_MAP[langKey] || "Address:";
     renderEnglishAddress = false;
   }
 
@@ -1042,42 +1085,49 @@ function generateAadhaarPVCHTML(params: any): string {
     @font-face {
       font-family: '${params.localFontFamily}-Regular';
       src: url('data:font/ttf;base64,${params.localFontReg}') format('truetype');
-      font-weight: normal;
+      font-weight: 100 900;
       font-style: normal;
       font-display: block;
     }
     @font-face {
       font-family: '${params.localFontFamily}-Bold';
       src: url('data:font/ttf;base64,${params.localFontBold}') format('truetype');
-      font-weight: bold;
+      font-weight: 100 900;
       font-style: normal;
       font-display: block;
     }
     @font-face {
       font-family: 'NotoSansDevanagari-Regular';
       src: url('data:font/ttf;base64,${params.devanagariReg || params.localFontReg}') format('truetype');
-      font-weight: normal;
+      font-weight: 100 900;
       font-style: normal;
       font-display: block;
     }
     @font-face {
       font-family: 'NotoSansDevanagari-Bold';
       src: url('data:font/ttf;base64,${params.devanagariBold || params.localFontBold}') format('truetype');
-      font-weight: bold;
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: block;
+    }
+    @font-face {
+      font-family: 'NotoSansDevanagari';
+      src: url('data:font/ttf;base64,${params.devanagariBold || params.devanagariReg || params.localFontBold}') format('truetype');
+      font-weight: 100 900;
       font-style: normal;
       font-display: block;
     }
     @font-face {
       font-family: 'NotoSerif-Regular';
       src: url('data:font/ttf;base64,${params.serifReg}') format('truetype');
-      font-weight: normal;
+      font-weight: 100 900;
       font-style: normal;
       font-display: block;
     }
     @font-face {
       font-family: 'NotoSerif-Bold';
       src: url('data:font/ttf;base64,${params.serifBold}') format('truetype');
-      font-weight: bold;
+      font-weight: 100 900;
       font-style: normal;
       font-display: block;
     }
@@ -1109,7 +1159,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 150px;
       top: 28px;
       width: 560px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
       font-size: 34px;
       font-weight: normal;
       color: #000000;
@@ -1124,7 +1174,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 150px;
       top: 83px;
       width: 560px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
       font-size: 26px;
       font-weight: normal;
       color: #000000;
@@ -1168,7 +1218,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 242px;
       top: 172px;
       width: 730px;
-      font-family: '${params.localFontFamily}-Bold', sans-serif;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
       font-size: 29.5px;
       font-weight: bold;
       color: #000000;
@@ -1421,7 +1471,7 @@ function generateAadhaarPVCHTML(params: any): string {
       position: absolute;
       left: 44px;
       top: 145px;
-      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', sans-serif;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', sans-serif;
       font-size: 25px;
       font-weight: bold;
       color: #000000;
@@ -1433,7 +1483,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 44px;
       top: 178px;
       width: 660px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
+      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
       font-size: 27px;
       color: #000000;
       line-height: 1.35;
@@ -1470,7 +1520,7 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 0;
       width: 100%;
       text-align: center;
-      font-family: '${params.localFontFamily}-Bold', 'Shruti', 'Nirmala UI', sans-serif;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', 'Shruti', 'Nirmala UI', sans-serif;
       font-size: 43px;
       font-weight: bold;
       color: #000000;
@@ -1492,7 +1542,7 @@ function generateAadhaarPVCHTML(params: any): string {
       top: 114px;
       width: 190px;
       text-align: center;
-      font-family: '${params.localFontFamily}-Bold', 'Shruti', 'Nirmala UI', sans-serif;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', 'Shruti', 'Nirmala UI', sans-serif;
       font-size: 34px;
       font-weight: bold;
       color: #CC0000;

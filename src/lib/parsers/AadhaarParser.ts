@@ -756,26 +756,15 @@ export class AadhaarParser extends BaseParser {
       ) regionalCount++;
     }
     // Require substantial local language text beyond the common government headers.
-    // ALL Aadhaar cards (even English-only) contain ~80-120 Devanagari chars from
-    // standard Hindi template text (भारत सरकार, UIDAI name, warning text, address label).
-    // Real Hindi/Marathi local content adds 200+ chars; we require ≥150 to be safe.
-    // Regional scripts (Gujarati, Tamil, etc.) are NOT present on English-only cards,
-    // so a threshold of 30 chars is sufficient for those.
-    if (devanagariCount >= 150) return true;
-    if (regionalCount >= 30) return true;
+    // Real Hindi/Marathi local content adds 40+ chars.
+    // Regional scripts (Gujarati, Tamil, etc.) require 20+ chars.
+    if (devanagariCount >= 40) return true;
+    if (regionalCount >= 20) return true;
     return false;
   }
 
   extractLocalName(): string | null {
     console.log('[AadhaarParser] Running Local Name extraction rules');
-
-    // ── GUARD: Skip local name extraction entirely for English-only PDFs ──
-    // QR codes always contain lname, but we only display it if the PDF itself
-    // has meaningful Indic script text (not just standard government headers).
-    if (!this.hasSignificantLocalContent()) {
-      console.log('[AadhaarParser] Skipping local name — PDF has no significant Indic script content (English-only card)');
-      return null;
-    }
 
     const coData = this.extractCoName();
     if (coData.local) console.log(`[AadhaarParser] Detected local C/O name to filter: "${coData.local}"`);
@@ -796,6 +785,12 @@ export class AadhaarParser extends BaseParser {
         console.log(`[AadhaarParser] Local Name from QR lname field: ${qrLocalName}`);
         return this.normalizeIndicText(qrLocalName);
       }
+    }
+
+    // ── GUARD: Skip local name extraction for English-only PDFs if QR code didn't provide lname ──
+    if (!this.hasSignificantLocalContent()) {
+      console.log('[AadhaarParser] Skipping local name — PDF has no significant Indic script content (English-only card)');
+      return null;
     }
 
     // ── PRIORITY 2: PDF Text heuristics ──
@@ -872,12 +867,6 @@ export class AadhaarParser extends BaseParser {
   extractLocalAddress(): string | null {
     console.log('[AadhaarParser] Running Local Address extraction rules');
 
-    // ── GUARD: Skip local address extraction for English-only PDFs ──
-    if (!this.hasSignificantLocalContent()) {
-      console.log('[AadhaarParser] Skipping local address — PDF has no significant Indic script content (English-only card)');
-      return null;
-    }
-
     // ── PRIORITY 1: QR Code address fields (most accurate — direct from UIDAI) ──
     if (this.qrData) {
       const qrLocalAddr = this.qrData.laddress || this.qrData.local_address || null;
@@ -885,6 +874,12 @@ export class AadhaarParser extends BaseParser {
         console.log(`[AadhaarParser] Local Address from QR laddress field: ${qrLocalAddr.substring(0, 50)}`);
         return this.normalizeIndicText(qrLocalAddr);
       }
+    }
+
+    // ── GUARD: Skip local address extraction for English-only PDFs if QR code didn't provide laddress ──
+    if (!this.hasSignificantLocalContent()) {
+      console.log('[AadhaarParser] Skipping local address — PDF has no significant Indic script content (English-only card)');
+      return null;
     }
 
     // All known address labels across Indian languages (including Gujarati care-of/relation prefixes)
