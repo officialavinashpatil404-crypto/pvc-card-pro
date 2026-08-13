@@ -172,31 +172,29 @@ function detectLanguageFromText(text: string): string {
     bengali: (text.match(/[\u0980-\u09FF]/g) || []).length,
     punjabi: (text.match(/[\u0A00-\u0A7F]/g) || []).length,
     odia: (text.match(/[\u0B00-\u0B7F]/g) || []).length,
-    devanagari: (text.match(/[\u0900-\u097F]/g) || []).length,
     urdu: (text.match(/[\u0600-\u06FF]/g) || []).length,
+    devanagari: (text.match(/[\u0900-\u097F]/g) || []).length,
   };
 
-  let maxLang = 'english';
-  let maxCount = 0;
-
+  // 1. TOP PRIORITY: Regional non-Devanagari scripts (Gujarati, Tamil, Telugu etc.)
+  // National Devanagari headers ("भारत सरकार" etc. ~60 chars) are printed on ALL Aadhaar cards.
+  // We MUST prioritize any regional script present over Devanagari so Gujarati/Tamil cards aren't misclassified as Hindi.
   for (const [lang, count] of Object.entries(counts)) {
-    if (count > maxCount) {
-      maxCount = count;
-      maxLang = lang;
+    if (lang !== 'devanagari' && count > 3) {
+      if (lang === 'bengali' && /[\u09F0\u09F1]/.test(text)) return 'assamese';
+      return lang;
     }
   }
 
-  if (maxCount === 0) return 'english';
-  if (maxLang === 'devanagari') {
-    if (/[\u0933]/.test(text)) return 'marathi';
+  // 2. Devanagari fallback (Hindi vs Marathi)
+  if (counts.devanagari > 5) {
+    if (/[\u0933]/.test(text) || text.includes('माझे') || text.includes('माझी') || text.includes('नागरिकत्व')) {
+      return 'marathi';
+    }
     return 'hindi';
   }
-  if (maxLang === 'bengali') {
-    if (/[\u09F0\u09F1]/.test(text)) return 'assamese';
-    return 'bengali';
-  }
 
-  return maxLang;
+  return 'english';
 }
 
 function applyDynamicRepairs(text: string, dynamicMappings: Record<string, string>): string {

@@ -1182,11 +1182,9 @@ export class AadhaarParser extends BaseParser {
       }
     }
 
-    if (counts.devanagari > bestRegionalCount && counts.devanagari > 5) {
-      return 'devanagari';
-    }
-
-    if (bestRegionalCount > 5) {
+    // 1. TOP PRIORITY: If any non-Devanagari regional script is present (>3 chars), return it!
+    // National Devanagari headers ("भारत सरकार" ~60 chars) are on ALL cards and must NOT override state script.
+    if (bestRegionalCount > 3) {
       return bestRegionalLang;
     }
 
