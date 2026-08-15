@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "ocr": "cd ocr-service && .\\venv\\Scripts\\python main.py",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

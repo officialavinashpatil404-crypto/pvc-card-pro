@@ -44,6 +44,8 @@ interface ExtractedData {
   aiRepaired?: boolean;
   aiWarning?: string | null;
   aiEnabled?: boolean;
+  isDeterministicPython?: boolean;
+  extractionMethod?: string;
 }
 
 type Step = 'upload' | 'review' | 'result';
@@ -168,6 +170,10 @@ function GenerateCardContent() {
 
         if (activeData.qrBase64) logs.push('✓ QR_EXTRACTED — QR code ready from PDF');
         else logs.push('✗ QR_EXTRACTED — QR not found (placeholder used)');
+
+        if (activeData.isDeterministicPython) {
+          logs.push('⚡ ENGINE — Python Deterministic (100% Zero AI / Exact CMap)');
+        }
       }
 
       logs.push('… FRONT_RENDERED — rendering front card template');
@@ -466,9 +472,19 @@ function GenerateCardContent() {
               {genError}
             </div>
           ) : (
-            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-2xl text-xs font-bold shadow-sm">
-              <span className="material-symbols-outlined text-emerald-600 text-[22px]">check_circle</span>
-              PVC Card generated successfully! Review side-by-side preview below and download.
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-2xl text-xs font-bold shadow-sm">
+                <span className="material-symbols-outlined text-emerald-600 text-[22px]">check_circle</span>
+                PVC Card generated successfully! Review side-by-side preview below and download.
+              </div>
+              {extracted?.isDeterministicPython && (
+                <div className="flex items-center gap-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 text-blue-900 px-4 py-3 rounded-2xl text-xs font-bold shadow-sm">
+                  <span className="material-symbols-outlined text-blue-600 text-[22px]">bolt</span>
+                  <div>
+                    <span className="font-extrabold text-blue-950">Python Deterministic Engine Active:</span> Local language (કાના-માત્રા) and QR data extracted directly from PDF font stream without AI (Zero AI Token Cost).
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

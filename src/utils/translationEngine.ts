@@ -338,8 +338,8 @@ STRICT RULES:
 
 Return ONLY valid JSON: {"localName": "...", "localAddress": "..."}`;
 
-    // Smart model cascade: try valid available models
-    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite'];
+    // Smart model cascade: try newest available model first
+    const modelsToTry = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20'];
     const geminiConfig = {
       responseMimeType: "application/json" as const,
       temperature: 0,

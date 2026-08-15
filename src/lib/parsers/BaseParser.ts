@@ -45,6 +45,10 @@ export interface ExtractedDocumentData {
   state?: string | null;
   rationId?: string | null;
   isOldLayout?: boolean;
+  careOf?: string | null;
+  pincode?: string | null;
+  isDeterministicPython?: boolean;
+  extractionMethod?: string;
 }
 
 export abstract class BaseParser {

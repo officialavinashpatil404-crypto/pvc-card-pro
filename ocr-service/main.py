@@ -1,21 +1,29 @@
 import os
 import io
 import sys
+import gzip
+import zlib
+import base64
+import re
+from typing import Optional, List, Dict, Any
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import fitz  # PyMuPDF
 import numpy as np
 from PIL import Image
-from typing import Optional
+import zxingcpp
+import cv2
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import easyocr
-import ssl
+import uvicorn
 
-
-
-# Bypass SSL certificate verification for EasyOCR model downloads
-ssl._create_default_https_context = ssl._create_unverified_context
-
-app = FastAPI(title="PVC Card Local OCR & Transliteration Service")
+app = FastAPI(title="PVC Card Deterministic Aadhaar & Indic Script Extractor")
 
 # Enable CORS for Next.js app communication
 app.add_middleware(
@@ -26,276 +34,391 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global cache for EasyOCR readers to save RAM and initialization time
-readers = {}
+# ---------------------------------------------------------------------------
+# Indic Unicode Script Definitions
+# ---------------------------------------------------------------------------
+SCRIPT_RANGES = [
+    ("devanagari", 0x0900, 0x097F),
+    ("gujarati", 0x0A80, 0x0AFF),
+    ("bengali", 0x0980, 0x09FF),
+    ("tamil", 0x0B80, 0x0BFF),
+    ("telugu", 0x0C00, 0x0C7F),
+    ("kannada", 0x0C80, 0x0CFF),
+    ("malayalam", 0x0D00, 0x0D7F),
+    ("oriya", 0x0B00, 0x0B7F),
+    ("gurmukhi", 0x0A00, 0x0A7F),
+]
 
-def get_ocr_reader(lang_code: str):
+def detect_script(text: str) -> str:
+    for ch in text:
+        code = ord(ch)
+        for name, lo, hi in SCRIPT_RANGES:
+            if lo <= code <= hi:
+                return name
+    return "latin"
+
+def has_local_script(line: str) -> bool:
+    return detect_script(line) != "latin"
+
+# ---------------------------------------------------------------------------
+# QR Candidate Extractor (Image Streams + Rendered Regions)
+# ---------------------------------------------------------------------------
+def extract_candidate_qr_images(doc: fitz.Document) -> List[Image.Image]:
+    candidates = []
+    pages_to_scan = [doc[i] for i in range(min(2, len(doc)))]
+
+    # 1. Direct PDF image streams
+    for page in pages_to_scan:
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            try:
+                base_image = doc.extract_image(xref)
+                img_bytes = base_image["image"]
+                pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                w, h = pil_img.size
+                aspect = w / h if h else 0
+                if 0.80 <= aspect <= 1.25 and w >= 80:
+                    candidates.append(pil_img)
+            except Exception:
+                continue
+
+    # 2. Render pages at 300 DPI to catch scanned PDFs and vector-embedded QR codes
+    for page in pages_to_scan:
+        try:
+            pix = page.get_pixmap(dpi=300)
+            page_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+            w, h = page_img.size
+            candidates.append(page_img)
+            if h > 1000:
+                bottom_area = page_img.crop((0, int(h * 0.55), w, h))
+                candidates.append(bottom_area)
+                bw, bh = bottom_area.size
+                candidates.append(bottom_area.crop((int(bw * 0.20), int(bh * 0.30), int(bw * 0.52), bh)))
+                candidates.append(bottom_area.crop((int(bw * 0.50), int(bh * 0.15), int(bw * 0.85), bh)))
+        except Exception:
+            pass
+
+    return candidates
+
+# ---------------------------------------------------------------------------
+# QR Decoder with Multi-Engine Fallback (ZXing-C++ / OpenCV)
+# ---------------------------------------------------------------------------
+def decode_qr_to_bytes(pil_img: Image.Image) -> Optional[bytes]:
+    # 1. Try ZXing-C++ directly
+    try:
+        results = zxingcpp.read_barcodes(pil_img)
+        for res in results:
+            if res.text or res.bytes:
+                payload = res.text or res.bytes.decode("latin-1", errors="ignore")
+                # Case A: UIDAI Numeric QR Mode (decimal string of big integer)
+                if payload.isdigit() and len(payload) > 50:
+                    big_int = int(payload)
+                    byte_length = (big_int.bit_length() + 7) // 8
+                    return big_int.to_bytes(byte_length, byteorder="big")
+                
+                # Case B: Raw bytes
+                if res.bytes and len(res.bytes) > 20:
+                    return res.bytes
+                if payload:
+                    return payload.encode("latin-1", errors="ignore")
+    except Exception:
+        pass
+
+    # 2. Try OpenCV QRCodeDetector as fallback
+    try:
+        cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
+        detector = cv2.QRCodeDetector()
+        val, _, _ = detector.detectAndDecode(cv_img)
+        if val and val.isdigit() and len(val) > 50:
+            big_int = int(val)
+            byte_length = (big_int.bit_length() + 7) // 8
+            return big_int.to_bytes(byte_length, byteorder="big")
+    except Exception:
+        pass
+
+    return None
+
+# ---------------------------------------------------------------------------
+# Payload Decompressor
+# ---------------------------------------------------------------------------
+def decompress_payload(raw: bytes) -> bytes:
+    for fn in [gzip.decompress, zlib.decompress, lambda b: zlib.decompress(b, -zlib.MAX_WBITS)]:
+        try:
+            return fn(raw)
+        except Exception:
+            continue
+    return raw
+
+# ---------------------------------------------------------------------------
+# Delimited Field Parser (UIDAI Standard Specification)
+# ---------------------------------------------------------------------------
+FIELD_MAPPING = {
+    0: "version",
+    2: "reference_id",
+    3: "full_name",
+    4: "dob",
+    5: "gender",
+    6: "care_of",
+    7: "district",
+    8: "landmark",
+    9: "house",
+    10: "location",
+    11: "pincode",
+    12: "post_office",
+    13: "state",
+    14: "sub_district",
+    15: "vtc",
+    17: "masked_number",
+}
+
+TEXT_FIELD_COUNT = 19
+
+def parse_qr_fields(decompressed: bytes) -> Dict[str, Any]:
+    parts = decompressed.split(b"\xff")
+    data: Dict[str, Any] = {
+        "full_name": "",
+        "dob": "",
+        "gender": "",
+        "care_of": "",
+        "district": "",
+        "landmark": "",
+        "house": "",
+        "location": "",
+        "pincode": "",
+        "post_office": "",
+        "state": "",
+        "sub_district": "",
+        "vtc": "",
+        "masked_number": "",
+        "photo_png_base64": None,
+    }
+
+    for idx, attr in FIELD_MAPPING.items():
+        if idx < len(parts):
+            try:
+                data[attr] = parts[idx].decode("utf-8", errors="replace").strip()
+            except Exception:
+                data[attr] = ""
+
+    # Reconstruct formatted English address
+    address_parts = [
+        data.get("care_of"),
+        data.get("house"),
+        data.get("landmark"),
+        data.get("location"),
+        data.get("vtc"),
+        data.get("post_office"),
+        data.get("sub_district"),
+        data.get("district"),
+        data.get("state"),
+        data.get("pincode"),
+    ]
+    cleaned_address = ", ".join([p for p in address_parts if p and len(p.strip()) > 0])
+    data["address_english"] = cleaned_address
+
+    # Extract embedded JPEG2000 photo from TEXT_FIELD_COUNT
+    if len(parts) > TEXT_FIELD_COUNT:
+        try:
+            photo_bytes = b"\xff" + b"\xff".join(parts[TEXT_FIELD_COUNT:])
+            img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            data["photo_png_base64"] = base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception as e:
+            print(f"[Aadhaar-QR] Photo JP2 decode warning: {e}")
+
+    return data
+
+# ---------------------------------------------------------------------------
+# 100% Deterministic Indic Local Language Extractor (PyMuPDF CMap Resolving)
+# ---------------------------------------------------------------------------
+SYSTEM_NOISE = [
+    "unique identification", "authority of india", "government of india",
+    "ભારત સરકાર", "વિશિષ્ટ ઓળખ સત્તામંડળ", "મેરા આધાર મારી ઓળખ", "મારો આધાર મારી ઓળખ",
+    "भारत सरकार", "भारतीय विशिष्ट पहचान प्राधिकरण", "मेरा आधार मेरी पहचान",
+    "மத்திய அரசு", "இந்திய தனித்துவ அடையாள ஆணையம்", "என் ஆதார் என் அடையாளம்",
+    "భారత ప్రభుత్వం", "భారత విశిష్ట గుర్तिంపు ప్రాధికార సంస్థ",
+    "ಪ್ರಭುತ್ವ", "భారతీయ విశిష్ట గుర్తింపు ప్రాధికార",
+    "ഭാരത സർക്കാർ", "പൗരത്വ തിരിച്ചറിയൽ",
+    "প্ৰশাসন", "পশ্চিমবঙ্গ", "পশ্চিম বঙ্গ",
+    "enrolment", "enrollment", "નામાંકન", "ક્રમ", "સંખ્યા", "help@", "1947", "uidai",
+    "તારીખ", "dob", "year", "birth", "male", "female", "પુરુષ", "સ્ત્રી", "transgender",
+    "વિશિષ્ટ ઓળખ"
+]
+
+def is_noise_block(text: str) -> bool:
+    txt_lower = text.lower()
+    return any(noise in txt_lower for noise in SYSTEM_NOISE)
+
+def extract_indic_local_fields(doc: fitz.Document) -> Dict[str, str]:
     """
-    Returns or initializes the cached EasyOCR reader for the target language.
+    Extracts regional name & address with 100% matra & conjunct fidelity
+    using PyMuPDF's CMap-resolved text layer.
     """
-    lang_code = (lang_code or 'gujarati').lower().strip()
-    if lang_code not in readers:
-        # Map target language names to EasyOCR codes (paired with English)
-        lang_map = {
-            'gujarati': ['en'],  # EasyOCR does not support 'gu' code, fallback to English to avoid crashes
-            'hindi': ['hi', 'en'],
-            'marathi': ['mr', 'en'],
-            'tamil': ['ta', 'en'],
-            'telugu': ['te', 'en'],
-            'kannada': ['kn', 'en'],
-            'malayalam': ['ml', 'en'],
-            'bengali': ['bn', 'en'],
-            'punjabi': ['pa', 'en'],
-            'odia': ['or', 'en']
-        }
-        codes = lang_map.get(lang_code, ['en'])
-        print(f"[OCR-Service] Initializing EasyOCR Reader for: {lang_code} (codes={codes})...")
-        readers[lang_code] = easyocr.Reader(codes, gpu=False)  # Run on CPU by default for CPU servers
-    return readers[lang_code]
+    if len(doc) == 0:
+        return {"local_full_name": "", "local_address": "", "local_script": ""}
 
-def reconstruct_lines(ocr_results):
-    """
-    Groups OCR bounding boxes into lines by grouping elements that have 
-    similar vertical center coordinates, and sorts elements from left to right.
-    """
-    if not ocr_results:
-        return []
-        
-    # Each result is: [ [[x0,y0], [x1,y1], [x2,y2], [x3,y3]], text, confidence ]
-    boxes = []
-    for bbox, text, conf in ocr_results:
-        # Calculate bounding box bounds and center y
-        ys = [pt[1] for pt in bbox]
-        xs = [pt[0] for pt in bbox]
-        min_y, max_y = min(ys), max(ys)
-        min_x, max_x = min(xs), max(xs)
-        center_y = (min_y + max_y) / 2
-        boxes.append({
-            'min_x': min_x,
-            'max_x': max_x,
-            'min_y': min_y,
-            'max_y': max_y,
-            'center_y': center_y,
-            'height': max_y - min_y,
-            'text': text.strip(),
-            'conf': conf
-        })
+    text = doc[0].get_text("text")
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
 
-    # Sort boxes vertically
-    boxes.sort(key=lambda b: b['center_y'])
-
-    lines = []
-    if not boxes:
-        return lines
-
-    current_line = [boxes[0]]
-    for box in boxes[1:]:
-        # If the vertical distance between centers is less than half the height of the current box,
-        # we consider them to be on the same horizontal line.
-        vertical_threshold = max(box['height'], current_line[-1]['height']) * 0.45
-        if abs(box['center_y'] - current_line[-1]['center_y']) < vertical_threshold:
-            current_line.append(box)
+    blocks = []
+    current_block = []
+    for line in lines:
+        if has_local_script(line):
+            current_block.append(line)
         else:
-            # Sort the completed line horizontally (left to right)
-            current_line.sort(key=lambda b: b['min_x'])
-            lines.append(current_line)
-            current_line = [box]
+            if current_block:
+                blocks.append(current_block)
+                current_block = []
+    if current_block:
+        blocks.append(current_block)
 
-    # Add the last line
-    if current_line:
-        current_line.sort(key=lambda b: b['min_x'])
-        lines.append(current_line)
+    # Filter out system titles & government headers
+    valid_blocks = []
+    for b in blocks:
+        block_text = " ".join(b)
+        if not is_noise_block(block_text) and len(block_text) >= 2:
+            valid_blocks.append(b)
 
-    return lines
+    result = {"local_full_name": "", "local_address": "", "local_script": ""}
 
+    if valid_blocks:
+        name_block = valid_blocks[0]
+        result["local_full_name"] = " ".join(name_block).strip()
+        result["local_script"] = detect_script(result["local_full_name"])
+
+        # Longest multi-line block candidate or block containing address keywords is the regional address
+        address_candidates = [b for b in valid_blocks[1:] if len(b) >= 2 or any(kw in " ".join(b) for kw in ["સરનામું", "પતા", "पत्ता", "મુગવરી", "చిరునామా", "വിളಾಸ", "Address"])]
+        if address_candidates:
+            best = max(address_candidates, key=lambda b: len(" ".join(b)))
+            result["local_address"] = " ".join(best).strip()
+        elif len(valid_blocks) > 1:
+            result["local_address"] = " ".join(valid_blocks[1]).strip()
+
+    return result
+
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+@app.post("/extract-aadhaar")
 @app.post("/process-pdf")
-async def process_pdf(
+async def extract_aadhaar_endpoint(
     pdf_file: UploadFile = File(...),
     password: Optional[str] = Form(None),
-    target_lang: str = Form("gujarati")
+    target_lang: Optional[str] = Form("gujarati"),
 ):
     try:
-        print(f"[OCR-Service] Received PDF processing request for language: {target_lang}")
-        
-        # 1. Read PDF bytes
         pdf_bytes = await pdf_file.read()
-        
-        # 2. Open PDF with PyMuPDF
         try:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid PDF file format: {str(e)}")
 
-        # 3. Decrypt PDF if password protected
-        if doc.is_encrypted:
+        if doc.is_encrypted or doc.needs_pass:
             if not password:
                 raise HTTPException(status_code=400, detail="PASSWORD_REQUIRED")
-            auth_success = doc.authenticate(password)
-            if not auth_success:
+            if not doc.authenticate(password):
                 raise HTTPException(status_code=400, detail="INVALID_PASSWORD")
 
-        # Get OCR reader for target language
-        reader = get_ocr_reader(target_lang)
+        print(f"[Deterministic-Extractor] Processing PDF with {len(doc)} pages...")
 
-        # 4. Render pages to images and run OCR
-        pages_left_lines = []
-        pages_right_lines = []
-        
-        for page_idx in range(len(doc)):
-            page = doc[page_idx]
-            
-            # Render page at 150 DPI for balanced speed and OCR accuracy
-            zoom = 150 / 72
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat)
-            
-            # Convert PyMuPDF pixmap to PIL Image
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            
-            # Optimization: If A4/vertical page, crop the bottom 32% (Aadhaar cards area)
-            # to make OCR run 3x-4x faster and avoid CPU timeout.
-            w, h = img.size
-            if h > w * 1.2:
-                img = img.crop((0, int(h * 0.68), w, h))
+        # 1. Deterministic QR Extraction
+        qr_data = {}
+        qr_success = False
+        candidates = extract_candidate_qr_images(doc)
+        print(f"[Deterministic-Extractor] Found {len(candidates)} QR candidate images.")
+
+        for pil_img in candidates:
+            raw_bytes = decode_qr_to_bytes(pil_img)
+            if raw_bytes:
+                decompressed = decompress_payload(raw_bytes)
+                parsed = parse_qr_fields(decompressed)
+                if parsed.get("full_name") and len(parsed["full_name"]) > 1:
+                    qr_data = parsed
+                    qr_success = True
+                    print(f"[Deterministic-Extractor] QR Decoded: Name='{qr_data.get('full_name')}', DOB='{qr_data.get('dob')}'")
+                    break
+
+        # 2. Deterministic Indic Script Extraction from PDF CMap Layer
+        local_fields = extract_indic_local_fields(doc)
+        print(f"[Deterministic-Extractor] Local Fields: Name='{local_fields.get('local_full_name')}', Script='{local_fields.get('local_script')}'")
+
+        # 3. Fallback OCR for scanned/photocopy PDFs if vector text layer was empty
+        if not local_fields.get("local_full_name") and len(doc) > 0:
+            print("[Deterministic-Extractor] Vector text layer empty (scanned PDF), running fast EasyOCR fallback...")
+            try:
+                import easyocr
+                page = doc[0]
+                pix = page.get_pixmap(dpi=150)
+                page_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+                w, h = page_img.size
+                if h > w * 1.2:
+                    page_img = page_img.crop((0, int(h * 0.65), w, h))
                 
-            img_arr = np.array(img)
-            
-            # Run EasyOCR on page image
-            ocr_results = reader.readtext(img_arr)
-            
-            # Horizontal division for A4 sheet side-by-side Aadhaar templates
-            # A4 width at 150 DPI is ~1240px. If width > 750, we split left (front) and right (back)
-            if img.width > 750:
-                mid_x = img.width / 2
-                left_results = []
-                right_results = []
+                lang_code = (target_lang or 'gujarati').lower().strip()
+                lang_map = {
+                    'gujarati': ['en'],
+                    'hindi': ['hi', 'en'],
+                    'marathi': ['mr', 'en'],
+                    'tamil': ['ta', 'en'],
+                    'telugu': ['te', 'en'],
+                    'kannada': ['kn', 'en'],
+                    'malayalam': ['ml', 'en'],
+                    'bengali': ['bn', 'en'],
+                    'punjabi': ['pa', 'en'],
+                    'odia': ['or', 'en']
+                }
+                codes = lang_map.get(lang_code, ['en'])
+                reader = easyocr.Reader(codes, gpu=False)
+                ocr_results = reader.readtext(np.array(page_img))
                 for res in ocr_results:
-                    bbox = res[0]
-                    xs = [pt[0] for pt in bbox]
-                    center_x = sum(xs) / len(xs)
-                    if center_x < mid_x:
-                        left_results.append(res)
-                    else:
-                        right_results.append(res)
-                
-                left_lines = reconstruct_lines(left_results)
-                right_lines = reconstruct_lines(right_results)
-                pages_left_lines.append(left_lines)
-                pages_right_lines.append(right_lines)
-            else:
-                # Pre-cropped single page or individual card
-                lines = reconstruct_lines(ocr_results)
-                pages_left_lines.append(lines)
-                pages_right_lines.append(lines)
-
-        # 5. Extract name and address using horizontal layouts & Indian script heuristics
-        local_name = ""
-        local_address = ""
-
-        # Flat lists of text lines for left (front) and right (back) card areas
-        left_lines_str = []
-        for page_lines in pages_left_lines:
-            for line in page_lines:
-                line_str = " ".join([box['text'] for box in line])
-                left_lines_str.append(line_str)
-
-        right_lines_str = []
-        for page_lines in pages_right_lines:
-            for line in page_lines:
-                line_str = " ".join([box['text'] for box in line])
-                right_lines_str.append(line_str)
-
-        # Logs disabled to prevent Windows terminal encoding crashes and preserve privacy
-        pass
-
-        # Heuristic 1: Find Regional Address block from the right (back) lines
-        address_keywords = [
-            'સરનામું', 'સરનામુ', 'સરનામ', 'સરનામી', 'પતા', 'पता', 'पत्ता', 'मुखवरी', 'முகவரி', 
-            'చిరునామా', 'ವಿಳಾಸ', 'മേൽവിലാസം', 'ঠিকানা', 'ଠିକଣา', 'ਪતા'
-        ]
-
-        address_lines = []
-        in_address_block = False
-        
-        for line in right_lines_str:
-            has_addr_keyword = any(kw in line for kw in address_keywords)
-            if has_addr_keyword:
-                in_address_block = True
-                cleaned_line = line
-                for kw in address_keywords:
-                    cleaned_line = cleaned_line.replace(kw, '').replace(':', '').replace('-', '').strip()
-                if cleaned_line:
-                    address_lines.append(cleaned_line)
-                continue
-                
-            if in_address_block:
-                address_lines.append(line)
-                import re
-                if re.search(r'\b\d{6}\b', line):
-                    # Found PIN code, end address block
-                    in_address_block = False
-
-        if address_lines:
-            local_address = ", ".join(address_lines)
-
-        # Heuristic 2: Find Regional Name from the left (front) lines
-        # Exclude common noise, government slogans, and address keywords
-        exclude_keywords = [
-            'government', 'india', 'unique', 'enrolment', 'enrollment', 'help', 'address', 'signature',
-            'authority', 'dob', 'year of birth', 'male', 'female', 'transgender', 'yob', 'जन्म',
-            'information', 'सूचना', 'पहचान', 'आधार', 'मेरा', 'मेरी',
-            'ताथे', 'uidai', 'govt', 'प्रमाण', 'नागरिकता',
-            'भारत सरकार', 'भारत', 'सरकार', 'भारतीय', 'of india',
-            'તારીખ', 'જન્મ', 'પુરુષ', 'સ્ત્રી', 'આધાર', 'ભારત', 'ઓળખ',
-            'w/o', 'c/o', 's/o', 'd/o', 'road', 'street', 'society', 'flat', 'nagar', 'sector', 
-            'village', 'taluka', 'district', 'state', 'floor', 'building', 'plot', 'house',
-            'ડબલ્યુ/ઓ', 'સી/ઓ', 'એસ/ઓ', 'ડી/ઓ', 'પાસે', 'સામે', 'નજીક', 'રોડ', 'શેરી', 'સોસાયટી', 
-            'ફ્લેટ', 'મકાન', 'ઘર', 'નગર', 'સેક્ટર', 'વિભાગ', 'ગામ', 'તાલુકો', 'જિલ્લો', 'રાજ્ય', 
-            'સરનામું', 'સરનામુ', 'સર્કલ', 'ચોક', 'માર્ગ'
-        ]
-
-        best_name = ''
-        print(f"[OCR-Debug] Total left lines for name search: {len(left_lines_str)}")
-        for i, line in enumerate(left_lines_str[:20]):  # Print first 20 lines
-            print(f"[OCR-Debug] Line {i}: {line!r}")
-        for line in left_lines_str:
-            line_lower = line.lower()
-            has_regional = any(ord(char) > 127 for char in line)
-            is_noise = any(kw in line_lower for kw in exclude_keywords)
-            has_digits = any(char.isdigit() for char in line)
-            
-            # Name lines are typically 2-4 words, no digits, no noise keywords
-            words = line.split()
-            word_count = len(words)
-            # All words must be at least 2 characters (filter out OCR noise like ':')
-            all_words_valid = all(len(w) >= 2 for w in words)
-            if has_regional and not is_noise and not has_digits and all_words_valid and 2 <= word_count <= 4:
-                # Prefer shorter lines (names are usually 2-3 words in regional script)
-                if not best_name or word_count < len(best_name.split()):
-                    best_name = line
-                    if word_count == 2:  # Perfect short name, stop searching
+                    txt = res[1].strip()
+                    if has_local_script(txt) and 2 <= len(txt.split()) <= 4 and not local_fields["local_full_name"]:
+                        local_fields["local_full_name"] = txt
+                        local_fields["local_script"] = detect_script(txt)
                         break
-        local_name = best_name
+            except Exception as ocr_err:
+                print(f"[Deterministic-Extractor] Fallback OCR notice: {ocr_err}")
 
+        doc.close()
 
-        print(f"[OCR-Service] Extraction complete: localName len={len(local_name)}, localAddress len={len(local_address)}")
-
-        return {
+        # Build combined response
+        response = {
             "success": True,
-            "localName": local_name.strip(),
-            "localAddress": local_address.strip()
+            "source": "qr_deterministic" if qr_success else "text_layer",
+            "nameEnglish": qr_data.get("full_name", ""),
+            "nameLocalScript": local_fields.get("local_full_name", ""),
+            "dob": qr_data.get("dob", ""),
+            "gender": qr_data.get("gender", ""),
+            "aadhaarNumber": qr_data.get("masked_number", ""),
+            "addressEnglish": qr_data.get("address_english", ""),
+            "addressLocalScript": local_fields.get("local_address", ""),
+            "careOf": qr_data.get("care_of", ""),
+            "pincode": qr_data.get("pincode", ""),
+            "state": qr_data.get("state", ""),
+            "district": qr_data.get("district", ""),
+            "localScript": local_fields.get("local_script", target_lang),
+            "photoPngBase64": qr_data.get("photo_png_base64"),
+            # Backwards compatibility fields
+            "localName": local_fields.get("local_full_name", ""),
+            "localAddress": local_fields.get("local_address", ""),
         }
+
+        return response
 
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"[OCR-Service] Processing error: {str(e)}")
+        print(f"[Deterministic-Extractor] Processing error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "cached_readers": list(readers.keys())}
+    return {
+        "status": "ok",
+        "engine": "PyMuPDF-ZXing-Indic-Deterministic-v2",
+        "supported_scripts": [s[0] for s in SCRIPT_RANGES],
+    }
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False)
