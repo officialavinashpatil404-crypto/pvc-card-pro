@@ -677,6 +677,16 @@ export class AyushmanParser extends BaseParser {
     // Run this to fill in any fields still missing offline (without Gemini API)
     if (this.rawText) {
       console.log('[AyushmanParser] Running comprehensive text layer extraction for missing fields...');
+      
+      // STRICT VISUAL MATCHING RULE:
+      // The QR code contains deep profile data (village, mobile, abha) that is often NOT printed on the physical card.
+      // To ensure the PVC card exactly matches the visual PDF, we discard these hidden QR values
+      // and force them to be re-extracted ONLY if they are visually present in the raw PDF text layer.
+      // UPDATE: User requested to KEEP Mobile, ABHA, and Ration from the QR code for the PVC card.
+      // We will ONLY wipe Village and Subdivision because the QR code often contains backend codes (e.g. KASBA 0138).
+      this.extractedVillage = null;
+      this.extractedSubdivision = null;
+
       const allLines = this.rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
       
       const statesList = [
@@ -764,12 +774,20 @@ export class AyushmanParser extends BaseParser {
           if (labeledMatch) {
             this.extractedPMJAYID = labeledMatch[1].toUpperCase().replace(/[\s\-]/g, '');
             isFieldMatched = true;
-          } else if (!upper.includes(' ') && /^[A-Z0-9]{8,16}$/.test(upper)) {
-            // Only match standalone single-token codes (no spaces) as PMJAY ID fallback
-            if (!['MALE', 'FEMALE', 'TRANSGENDER', 'STATE', 'DISTRICT', 'VILLAGE', 'WARD', 'PMJAY', 'PRADHAN', 'MANTRI', 'GUJARAT', 'MAHARASHTRA', 'UTTAR PRADESH'].includes(upper)) {
-              if (/[A-Z]/.test(upper) || upper.length >= 9) {
-                this.extractedPMJAYID = upper;
-                isFieldMatched = true;
+          } else {
+            // Check tokens in the line for a standalone PMJAY ID fallback
+            const tokens = upper.split(/\s+/);
+            for (const token of tokens) {
+              if (/^[A-Z0-9]{8,16}$/.test(token) && 
+                  !['MALE', 'FEMALE', 'TRANSGENDER', 'STATE', 'DISTRICT', 'VILLAGE', 'WARD', 'PMJAY', 'PRADHAN', 'MANTRI', 'GUJARAT', 'MAHARASHTRA', 'UTTAR'].includes(token)) {
+                if (/[A-Z]/.test(token) || token.length >= 9) {
+                  // Ensure it's not just the YOB or ABHA parts
+                  if (!/^\d{4}$/.test(token)) {
+                    this.extractedPMJAYID = token;
+                    isFieldMatched = true;
+                    break;
+                  }
+                }
               }
             }
           }

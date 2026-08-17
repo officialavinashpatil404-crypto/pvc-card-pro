@@ -10,30 +10,17 @@ export class DocumentDetector {
   static detectAndParse(rawText: string, pdfBuffer: Buffer, password: string | null = null, expectedDocType: string | null = null): BaseParser | null {
     console.log('[DocumentDetector] Starting detection. Text length:', rawText.length, 'Expected Type:', expectedDocType);
     
-    if (expectedDocType === 'AYUSHMAN') {
-      console.log('[DocumentDetector] Forced expected type: Ayushman');
-      return new AyushmanParser(rawText, pdfBuffer, password);
+    // 1. Strict Priority: User Explicit Selection (expectedDocType from UI)
+    if (expectedDocType) {
+      console.log('[DocumentDetector] Strict User Selection provided. Bypassing auto-detection for:', expectedDocType);
+      if (expectedDocType === 'AYUSHMAN') return new AyushmanParser(rawText, pdfBuffer, password);
+      if (expectedDocType === 'ABHA') return new AbhaParser(rawText, pdfBuffer, password);
+      if (expectedDocType === 'VOTER') return new VoterParser(rawText, pdfBuffer, password);
+      if (expectedDocType === 'AADHAAR') return new AadhaarParser(rawText, pdfBuffer, password);
+      if (expectedDocType === 'PAN') return new PanParser(rawText, pdfBuffer, password);
+      if (expectedDocType === 'ESHRAM') return new EshramParser(rawText, pdfBuffer, password);
     }
-    if (expectedDocType === 'ABHA') {
-      console.log('[DocumentDetector] Forced expected type: ABHA');
-      return new AbhaParser(rawText, pdfBuffer, password);
-    }
-    if (expectedDocType === 'VOTER') {
-      console.log('[DocumentDetector] Forced expected type: Voter');
-      return new VoterParser(rawText, pdfBuffer, password);
-    }
-    if (expectedDocType === 'AADHAAR') {
-      console.log('[DocumentDetector] Forced expected type: Aadhaar');
-      return new AadhaarParser(rawText, pdfBuffer, password);
-    }
-    if (expectedDocType === 'PAN') {
-      console.log('[DocumentDetector] Forced expected type: PAN');
-      return new PanParser(rawText, pdfBuffer, password);
-    }
-    if (expectedDocType === 'ESHRAM') {
-      console.log('[DocumentDetector] Forced expected type: e-Shram');
-      return new EshramParser(rawText, pdfBuffer, password);
-    }
+
     const textUpper = rawText.toUpperCase();
 
     console.log('[DocumentDetector] Checking for PAN signature...');

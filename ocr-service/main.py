@@ -343,9 +343,45 @@ async def extract_aadhaar_endpoint(
         local_fields = extract_indic_local_fields(doc)
         print(f"[Deterministic-Extractor] Local Fields: Name='{local_fields.get('local_full_name')}', Script='{local_fields.get('local_script')}'")
 
-        # 3. Fallback OCR for scanned/photocopy PDFs if vector text layer was empty
+        # --- CORRUPTION CHECK ---
+        # Detect invalid control characters (Unicode 0x80-0x9F) or single Latin letters wedged between Indic characters
+        is_corrupted = False
+        indic_range = r'[\u0900-\u0D7F]'
+        weird_ranges = r'[\u10A0-\u10FF\uAA80-\uAADF\u10B0-\u10FF]' # Georgian, Tai Viet, etc.
+        
+        all_indic_combining = (
+            r'[\u0900-\u0903\u093C-\u094D\u0945-\u0948\u094E-\u0954'
+            r'\u0980-\u0983\u09BC\u09BE-\u09CD\u09D7'
+            r'\u0A01-\u0A03\u0A3C\u0A3E-\u0A4D\u0A51\u0A70-\u0A71\u0A75'
+            r'\u0A81-\u0A83\u0ABC\u0ABE-\u0ACD\u0AE2-\u0AE3'
+            r'\u0B01-\u0B03\u0B3C\u0B3E-\u0B4D\u0B56-\u0B57\u0B62-\u0B63'
+            r'\u0B82\u0BBE-\u0BCD\u0BD7'
+            r'\u0C00-\u0C03\u0C3E-\u0C4D\u0C55-\u0C56\u0C62-\u0C63'
+            r'\u0C80-\u0C83\u0CBC\u0CBE-\u0CCD\u0CD5-\u0CD6\u0CE2-\u0CE3'
+            r'\u0D00-\u0D03\u0D3B-\u0D3C\u0D3E-\u0D4D\u0D57\u0D62-\u0D63]'
+        )
+        
+        name_val = local_fields.get("local_full_name", "")
+        addr_val = local_fields.get("local_address", "")
+        
+        for val in [name_val, addr_val]:
+            if val:
+                if re.search(r'[\x80-\x9F]', val):
+                    is_corrupted = True
+                if re.search(f'{indic_range}[a-zA-Z]{indic_range}', val):
+                    is_corrupted = True
+                if re.search(weird_ranges, val):
+                    is_corrupted = True
+                if re.search(r'\s' + all_indic_combining, val):
+                    is_corrupted = True
+                    
+        if is_corrupted:
+            print("[Deterministic-Extractor] Corruption detected in local text layer. Clearing fields to trigger EasyOCR fallback.")
+            local_fields = {"local_full_name": "", "local_address": "", "local_script": target_lang}
+
+        # 3. Fallback OCR for scanned/photocopy PDFs if vector text layer was empty or corrupted
         if not local_fields.get("local_full_name") and len(doc) > 0:
-            print("[Deterministic-Extractor] Vector text layer empty (scanned PDF), running fast EasyOCR fallback...")
+            print("[Deterministic-Extractor] Vector text layer empty or corrupted, running fast EasyOCR fallback...")
             try:
                 import easyocr
                 page = doc[0]
@@ -380,19 +416,51 @@ async def extract_aadhaar_endpoint(
             except Exception as ocr_err:
                 print(f"[Deterministic-Extractor] Fallback OCR notice: {ocr_err}")
 
+        # Try to extract full unmasked Aadhaar number from the text layer first
+        full_aadhaar = ""
+        try:
+            text = doc[0].get_text("text")
+            # Look for 12 digits separated by space or hyphen (unmasked)
+            match_unmasked = re.search(r'\b\d{4}[\s-]\d{4}[\s-]\d{4}\b', text)
+            if match_unmasked:
+                full_aadhaar = match_unmasked.group(0).strip().replace('-', ' ')
+            else:
+                # Look for 12 consecutive digits
+                match_digits = re.search(r'\b\d{12}\b', text)
+                if match_digits:
+                    val = match_digits.group(0)
+                    full_aadhaar = f"{val[0:4]} {val[4:8]} {val[8:12]}"
+        except Exception:
+            pass
+
+        aadhaar_num = full_aadhaar if full_aadhaar else qr_data.get("masked_number", "")
+        # Format masked number properly as XXXX XXXX 1234 if it's not spaced
+        if aadhaar_num:
+            val = aadhaar_num.replace(" ", "").replace("-", "")
+            if len(val) == 12:
+                if val.isdigit():
+                    aadhaar_num = f"{val[0:4]} {val[4:8]} {val[8:12]}"
+                else:
+                    masked_part = "XXXX XXXX"
+                    last_4 = val[-4:]
+                    aadhaar_num = f"{masked_part} {last_4}"
+
         doc.close()
+
+        name_val = local_fields.get("local_full_name", "")
+        addr_val = local_fields.get("local_address", "")
 
         # Build combined response
         response = {
             "success": True,
             "source": "qr_deterministic" if qr_success else "text_layer",
             "nameEnglish": qr_data.get("full_name", ""),
-            "nameLocalScript": local_fields.get("local_full_name", ""),
+            "nameLocalScript": name_val,
             "dob": qr_data.get("dob", ""),
             "gender": qr_data.get("gender", ""),
-            "aadhaarNumber": qr_data.get("masked_number", ""),
+            "aadhaarNumber": aadhaar_num,
             "addressEnglish": qr_data.get("address_english", ""),
-            "addressLocalScript": local_fields.get("local_address", ""),
+            "addressLocalScript": addr_val,
             "careOf": qr_data.get("care_of", ""),
             "pincode": qr_data.get("pincode", ""),
             "state": qr_data.get("state", ""),
@@ -400,8 +468,8 @@ async def extract_aadhaar_endpoint(
             "localScript": local_fields.get("local_script", target_lang),
             "photoPngBase64": qr_data.get("photo_png_base64"),
             # Backwards compatibility fields
-            "localName": local_fields.get("local_full_name", ""),
-            "localAddress": local_fields.get("local_address", ""),
+            "localName": name_val,
+            "localAddress": addr_val,
         }
 
         return response

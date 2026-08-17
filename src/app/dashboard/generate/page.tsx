@@ -232,8 +232,9 @@ function GenerateCardContent() {
     setDebugLog([]);
   };
 
-  const docTitle = docTypeParam === 'pan' ? 'PAN' : docTypeParam === 'ayushman' ? 'Ayushman' : docTypeParam === 'eshram' ? 'e-Shram' : docTypeParam === 'voter' ? 'Voting' : docTypeParam === 'abha' ? 'ABHA Health' : 'Aadhaar';
-  const docDesc = docTypeParam === 'aadhaar'
+  const actualDocType = extracted?.documentType?.toLowerCase() || docTypeParam;
+  const docTitle = actualDocType === 'pan' ? 'PAN' : actualDocType === 'ayushman' ? 'Ayushman' : actualDocType === 'eshram' ? 'e-Shram' : actualDocType === 'voter' ? 'Voting' : actualDocType === 'abha' ? 'ABHA Health' : 'Aadhaar';
+  const docDesc = actualDocType === 'aadhaar'
     ? 'Upload your e-Aadhaar PDF — photo, text details and QR code are extracted automatically.'
     : `Upload your ${docTitle} Card PDF — details are extracted and aligned automatically.`;
 

@@ -9,8 +9,8 @@ const baalFrontPath = path.resolve('./public/templates/aadhaar/baal-front.png');
 const baalBackPath  = path.resolve('./public/templates/aadhaar/baal-back.png');
 
 if (process.env.NODE_ENV !== 'production') {
-  const brainFrontSource = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\9bafbd7f-728b-4c66-8255-f18a816f4f7b\\media__1784014822212.png";
-  const brainBackSource  = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\9bafbd7f-728b-4c66-8255-f18a816f4f7b\\media__1784014822149.png";
+  const brainFrontSource = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\9bafbd7f-728b-4c66-8255-f18a816f4f7b\\media__1784014822149.png";
+  const brainBackSource  = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\9bafbd7f-728b-4c66-8255-f18a816f4f7b\\media__1784014822212.png";
   const brainBaalFront   = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\fe6df8c6-b747-41d4-8539-50cdef9a9a3a\\media__1784877018603.png";
   const brainBaalBack    = "C:\\Users\\NANO\\.gemini\\antigravity-ide\\brain\\fe6df8c6-b747-41d4-8539-50cdef9a9a3a\\media__1784877018766.png";
 

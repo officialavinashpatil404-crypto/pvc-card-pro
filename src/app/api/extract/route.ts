@@ -1230,7 +1230,7 @@ export async function POST(request: NextRequest) {
 
     // ALWAYS run Gemini AI for all supported document types if the API key is present.
     // This removes complex bypasses to ensure 100% spelling and translation accuracy via AI.
-    let needGemini = !!((process.env.GEMINI_API_KEY || userGeminiApiKey || 'AIzaSyC_ZSKmFEcn17TSOVxBz7Sg2h8W22CNzp4') && (docType === 'AADHAAR' || docType === 'VOTER' || docType === 'AYUSHMAN' || docType === 'PAN' || docType === 'ESHRAM' || docType === 'ABHA'));
+    let needGemini = !!((process.env.GEMINI_API_KEY || userGeminiApiKey || 'AIzaSyC_ZSKmFEcn17TSOVxBz7Sg2h8W22CNzp4') && (docType === 'AADHAAR' || docType === 'VOTER' || docType === 'PAN' || docType === 'ESHRAM' || docType === 'ABHA'));
     let tryLocalOcr = (docType === 'AADHAAR');
 
     let localOcrData: any = null;
@@ -1238,7 +1238,19 @@ export async function POST(request: NextRequest) {
       try {
         console.log('[API/Extract] Local Deterministic Extractor: Attempting extraction via local Python service (100% matra accuracy)...');
         const formDataObj = new FormData();
-        const pdfBlob = new Blob([Buffer.from(decryptedBytes)], { type: 'application/pdf' });
+        
+        // --- DIAGNOSTIC DEBUG SAVE ---
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const debugPath = path.join(process.cwd(), 'scratch', 'debug_decrypted_tamanna.pdf');
+          fs.writeFileSync(debugPath, Buffer.from(decryptedBytes));
+          console.log(`[DIAGNOSTIC] Saved decrypted PDF to ${debugPath} for Colab testing`);
+        } catch (e) {
+          console.error('[DIAGNOSTIC] Failed to save debug PDF:', e);
+        }
+        
+        const pdfBlob = new Blob([uint8Array], { type: 'application/pdf' });
         formDataObj.append('pdf_file', pdfBlob, 'document.pdf');
         if (trimmedPassword) {
           formDataObj.append('password', trimmedPassword);
@@ -1253,14 +1265,25 @@ export async function POST(request: NextRequest) {
               'x-api-secret': process.env.AADHAAR_EXTRACTOR_SECRET || '',
             },
             body: formDataObj,
-            signal: AbortSignal.timeout(15000)
+            signal: AbortSignal.timeout(60000)
           }
         );
 
         if (ocrResponse.ok) {
-          const ocrResult = await ocrResponse.json();
+          const rawOcrText = await ocrResponse.text();
+          console.log('[DEBUG_PY_RAW_HTTP_RESPONSE]', rawOcrText.substring(0, 500) + (rawOcrText.length > 500 ? '... [truncated]' : ''));
+          
+          let ocrResult;
+          try {
+            ocrResult = JSON.parse(rawOcrText);
+          } catch (e) {
+            console.error('[DEBUG_PY_JSON_PARSE_ERROR]', e);
+            throw new Error('Invalid JSON from Python service');
+          }
+          
           const localName = ocrResult.nameLocalScript || ocrResult.localName;
           const localAddr = ocrResult.addressLocalScript || ocrResult.localAddress;
+          console.log('[DEBUG_PY_DATA_START] name:', localName, 'addr:', localAddr);
           if (ocrResult.success && (localName || localAddr || ocrResult.nameEnglish)) {
             console.log('[API/Extract] Local Deterministic Extractor Success (100% matra accuracy). Bypassing Gemini AI to save tokens.');
             localOcrData = {
@@ -1336,7 +1359,7 @@ CRITICAL RULES:
 CRITICAL INSTRUCTIONS:
 1. You are a REPAIR ENGINE, NOT a content generator. Your ONLY job is to repair broken characters (glyphs, matras, conjuncts) in the original local-language text.
 2. DO NOT translate English into the local language arbitrarily. DO NOT reorder words. DO NOT rewrite addresses. DO NOT hallucinate new data.
-5. REPAIR RULE FOR ADDRESS: Preserve the exact structure, line order, and word order of the original local address. Repair broken individual characters and matras (e.g. 'àª¡à«àªàª¡à«àª²à«' -> 'àª¡àª¿àªàª¡à«àª²à«').
+5. REPAIR RULE FOR ADDRESS: Preserve the exact structure, line order, and word order of the original local address. Repair broken individual characters and matras (e.g. 'àª¡à«€àª‚àª¡à«‹àª²à«€' -> 'àª¡àª¿àª‚àª¡à«‹àª²à«€').
 6. If the document is purely in English and has absolutely NO regional script anywhere on it, leave local script fields empty. Otherwise, extract the regional script accurately.
 
 FIELD EXTRACTION RULES:
@@ -1759,9 +1782,10 @@ Return ONLY a valid JSON object:
 
 
       // ââ COMMON CLEANUPS AND FORMATTING âââââââââââââââ
-      const rawLang = detectLanguageFromText(
-        `${extractedData.localName || ''} ${extractedData.localAddress || ''}` || rawText
-      );
+      const langDetectionInput = `${extractedData.localName || ''} ${extractedData.localAddress || ''}` || rawText;
+      console.log(`[LANG_DEBUG] Input to detectLanguageFromText: "${langDetectionInput.substring(0, 100)}..."`);
+      const rawLang = detectLanguageFromText(langDetectionInput);
+      console.log(`[LANG_DEBUG] rawLang returned by detectLanguageFromText: "${rawLang}"`);
 
       // Determine correct language based on the extracted local text
       let currentLang = rawLang;
@@ -1846,11 +1870,17 @@ Return ONLY a valid JSON object:
       }
 
       // ── LOCAL LANGUAGE SELECTION: QR CODE DIRECT & GEMINI AI SINGLE SOURCE OF TRUTH ──
+      const isDeterministicPython = extractedData.textSource === 'PYTHON_DETERMINISTIC' || !!localOcrData;
+
       let finalLocalName = extractedData.localName?.trim() || '';
       let finalLocalAddress = extractedData.localAddress?.trim() || '';
 
+      if (isDeterministicPython) {
+        console.log('[DEBUG] isDeterministicPython is TRUE - LOCKING localName and localAddress as untouchable.');
+      } else {
+
       // If local fields are missing or contain no Indic script, run Gemini AI Precision engine directly
-      if (currentLang !== 'english' && (!finalLocalName || !finalLocalAddress || !/[^\x00-\x7F]/.test(finalLocalName))) {
+      if (!isDeterministicPython && currentLang !== 'english' && (!finalLocalName || !finalLocalAddress || !/[^\x00-\x7F]/.test(finalLocalName))) {
         try {
           const geminiApiKey = process.env.GEMINI_API_KEY || userGeminiApiKey;
           const aiRes = await translateOrRepairWithAI({
@@ -1867,22 +1897,25 @@ Return ONLY a valid JSON object:
         }
       }
 
-      extractedData.localName = finalLocalName;
-      extractedData.localAddress = finalLocalAddress;
+      if (!isDeterministicPython) {
+        extractedData.localName = finalLocalName;
+        extractedData.localAddress = finalLocalAddress;
 
-      if (currentLang === 'gujarati') {
-        const { repairGujaratiText } = require('../../../utils/gujaratiRepair');
-        extractedData.localName = repairGujaratiText(extractedData.localName || '');
-        extractedData.localAddress = repairGujaratiText(extractedData.localAddress || '');
-      }
+        if (currentLang === 'gujarati') {
+          const { repairGujaratiText } = require('../../../utils/gujaratiRepair');
+          extractedData.localName = repairGujaratiText(extractedData.localName || '');
+          extractedData.localAddress = repairGujaratiText(extractedData.localAddress || '');
+        }
 
-      // If language is Devanagari (Marathi/Hindi) but extracted text has subset-font shifted Gujarati codepoints, shift them back to Devanagari
-      if ((currentLang === 'marathi' || currentLang === 'hindi' || currentLang === 'devanagari') &&
-        (rawLang === 'gujarati' || /[\u0A80-\u0AFF]/.test(extractedData.localName || '') || /[\u0A80-\u0AFF]/.test(extractedData.localAddress || ''))) {
-        console.log('[LOCAL_LANG_DEBUG] Correcting Gujarati script offset to Devanagari (Marathi/Hindi)');
-        extractedData.localName = fixGujaratiToDevanagariShift(extractedData.localName || '');
-        extractedData.localAddress = fixGujaratiToDevanagariShift(extractedData.localAddress || '');
+        // If language is Devanagari (Marathi/Hindi) but extracted text has subset-font shifted Gujarati codepoints, shift them back to Devanagari
+        if ((currentLang === 'marathi' || currentLang === 'hindi' || currentLang === 'devanagari') &&
+          (rawLang === 'gujarati' || /[\u0A80-\u0AFF]/.test(extractedData.localName || '') || /[\u0A80-\u0AFF]/.test(extractedData.localAddress || ''))) {
+          console.log('[LOCAL_LANG_DEBUG] Correcting Gujarati script offset to Devanagari (Marathi/Hindi)');
+          extractedData.localName = fixGujaratiToDevanagariShift(extractedData.localName || '');
+          extractedData.localAddress = fixGujaratiToDevanagariShift(extractedData.localAddress || '');
+        }
       }
+      } // <--- End of else block for !isDeterministicPython
 
 
 
@@ -1901,7 +1934,6 @@ Return ONLY a valid JSON object:
       }, currentLang);
 
       const wasAiExtracted = extractedData.textSource === 'GEMINI';
-      const isDeterministicPython = extractedData.textSource === 'PYTHON_DETERMINISTIC' || !!localOcrData;
       if (!isDeterministicPython && !wasAiExtracted && currentLang !== 'english' && checkRepair.needsRepair) {
         console.log(`[TranslationEngine] Indic text repair triggered for lang=${currentLang}. Reason: ${checkRepair.reason}`);
         try {
@@ -2221,6 +2253,7 @@ Final Repaired Addr:    ${extractedData.localAddress}
     aiRepaired = !localOcrData && !!aiData;
     const isDeterministicPythonResult = !!localOcrData;
 
+    console.log('[DEBUG_PY_DATA_END] name:', extractedData.localName, 'addr:', extractedData.localAddress);
     return NextResponse.json({
       data: {
         ...extractedData,

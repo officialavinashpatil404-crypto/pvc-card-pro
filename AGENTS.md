@@ -19,3 +19,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **Do Not Edit:** Under no circumstances should any future updates or refactorings touch the Aadhaar AI prompt definitions, name/address repair system instructions, or the `disableWorker: true` configuration inside `extractTextWithPdfJs`.
 - **Why:** The current prompt configurations, phonetic matra repair guidelines, and single-threaded ESM configuration are optimized for Vercel Serverless environment runtime stability and token economy. Any modifications risk introducing ESM loader runtime errors or breaking Indic script spelling accuracy.
 
+# CRITICAL WORKSPACE RULES: DO NOT MODIFY AADHAAR AND BAAL AADHAAR LAYOUTS
+- **Strict Freeze:** The CSS, JS collision logic (`resolveAadhaarBlock`), and HTML structure for Aadhaar and Baal Aadhaar in `src/app/api/generate-card/route.ts` have been finalized and optimized for exact pixel-perfect positioning.
+- **Do Not Edit:** Under no circumstances should any future updates or refactorings touch the positioning (`bottom`, `top`, `height`) of Aadhaar numbers, VID numbers, Slogans (`.slogan-container`), QR codes, or UIDAI contact info (`.uidai-contact`).
+- **Why:** The coordinates and CSS logic (like `bottom: 86px` for Baal Aadhaar) are precisely calibrated so nothing touches the warning box or the red line. Any modifications risk breaking print alignment and overlapping text.

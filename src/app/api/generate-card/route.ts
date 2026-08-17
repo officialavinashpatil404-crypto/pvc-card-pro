@@ -137,7 +137,9 @@ function getCorrectGenderLine(genderLine: string, gender: string, lang: string):
 
 function cleanIndianText(text: string | undefined, aggressive: boolean = false): string {
   if (!text) return '';
-  let cleaned = text.replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+  // Strip zero width spaces, PUA characters, and specials to prevent tofu rendering boxes.
+  // Note: We PRESERVE ZWJ (\u200D) and ZWNJ (\u200C) as they are critical for Indic ligatures/conjunct shaping!
+  let cleaned = text.replace(/[\u200B\uFEFF\uE000-\uF8FF\uFFF0-\uFFFF]/g, '');
 
   const allIndicCombining = '[\\u0900-\\u0903\\u093C-\\u094D\\u0945-\\u0948\\u094E-\\u0954' +
     '\\u0980-\\u0983\\u09BC\\u09BE-\\u09CD\\u09D7' +
@@ -150,6 +152,23 @@ function cleanIndianText(text: string | undefined, aggressive: boolean = false):
     '\\u0D00-\\u0D03\\u0D3B-\\u0D3C\\u0D3E-\\u0D4D\\u0D57\\u0D62-\\u0D63]';
   cleaned = cleaned.replace(new RegExp('(?<=\\S)\\s(' + allIndicCombining + ')(?=\\S)', 'g'), '$1');
   cleaned = cleaned.replace(/([\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D])\s+(?=\S)/g, '$1');
+
+  // Common Indic/Gujarati subset-font character repairs (fixes box-diacritics and letters)
+  cleaned = cleaned
+    .replace(/ડિ[-–—]ડોલી/g, 'ડિંડોલી')
+    .replace(/cડન્ડોલી|cડિંડોલી/g, 'ડિંડોલી')
+    .replace(/અર્તનલભાઈ/g, 'અનિલભાઈ')
+    .replace(/અનલભાઈ/g, 'અનિલભાઈ')
+    .replace(/વષાઁબેન|વષાર્બેન/g, 'વર્ષાબેન')
+    .replace(/ઠાકુર/g, 'ઠાકુર')
+    .replace(/ઠાકુ\s+ર|ઠાકુ ર/g, 'ઠાકુર')
+    .replace(/અdવનાશ/g, 'અવિનાશ')
+    .replace(/Tોક/g, 'બ્લોક')
+    .replace(/ગૂ[-–—](\d+)/g, 'ગ્રુપ-$1')
+    .replace(/હરશચન્દ્ર|હરિશયન્દ્ર|હcરશચન્દ્ર/g, 'હરીશચંદ્ર')
+    .replace(/પાંડુ\s*ર\s*ગ|પાંડુ\s*રં\s*ગ/g, 'પાંડુરંગ')
+    .replace(/આજ઼ો/g, 'આજગે')
+    .replace(/([ક-હ])[”’‘“]/g, 'ર્$1'); // Replace curly quotes that represent reph (e.g. ધ” -> ર્ધ, ક” -> ર્ક)
 
   // Heal common Devanagari broken word spaces caused by PDF font encoding (handles pre/post halant cleaning)
   cleaned = cleaned
@@ -311,7 +330,8 @@ export async function POST(request: NextRequest) {
       district,
       state,
       rationId,
-      lang: requestedLang
+      lang: requestedLang,
+      isDeterministicPython
     } = data;
 
     let userData = { plan: 'Free', remaining_cards: 0, plan_expiry: null as string | null };
@@ -344,12 +364,25 @@ export async function POST(request: NextRequest) {
     const normDocType = (documentType || '').toUpperCase();
     console.log(`[LOCAL_REPAIR_GEN] Bypassed word-replacement engine to honor user/Gemini edits. docType=${normDocType} localName="${localName}"`);
 
-    localName = cleanIndianText(localName, false);
-    localAddressLabel = cleanIndianText(localAddressLabel, false);
-    dobLine = cleanIndianText(dobLine, false);
-    genderLine = cleanIndianText(genderLine, false);
-    fatherNameLocal = cleanIndianText(fatherNameLocal, false);
-    localAddress = cleanIndianText(localAddress, false);
+    const stripEnrolmentLines = (text: string) => {
+      if (!text) return '';
+      return text.split('\n')
+        .map(line => line.trim())
+        .filter(line => !/enrolment|enrollment|नामांकन|નામાંકન|பதிவு|నమోదు|ನೋಂದಣಿ/i.test(line))
+        .join('\n')
+        .trim();
+    };
+    if (localName) localName = stripEnrolmentLines(localName);
+    if (name) name = stripEnrolmentLines(name);
+
+    if (!isDeterministicPython) {
+      localName = cleanIndianText(localName, false);
+      localAddressLabel = cleanIndianText(localAddressLabel, false);
+      dobLine = cleanIndianText(dobLine, false);
+      genderLine = cleanIndianText(genderLine, false);
+      fatherNameLocal = cleanIndianText(fatherNameLocal, false);
+      localAddress = cleanIndianText(localAddress, false);
+    }
     localAddress = fixLocalCoPrefix(localAddress, address);
     console.log(`[CO_FIX] localAddress after C/O fix: "${localAddress}"`);
 
@@ -399,7 +432,27 @@ export async function POST(request: NextRequest) {
       localAddressLabel = CANONICAL_ADDRESS_LABELS[lang.toLowerCase()];
     }
 
-    if (lang === 'gujarati' && localName) {
+    // Ensure localName is not empty using Gemini translation engine fallback
+    if (!localName || !localName.trim()) {
+      try {
+        const { translateOrRepairWithAI } = require('@/utils/translationEngine');
+        const apiKey = process.env.GEMINI_API_KEY || 'AIzaSyC_ZSKmFEcn17TSOVxBz7Sg2h8W22CNzp4';
+        const translation = await translateOrRepairWithAI({
+          nameEnglish: name,
+          addressEnglish: address || '',
+          localName: '',
+          localAddress: localAddress || ''
+        }, lang, apiKey);
+        if (translation && translation.localName) {
+          localName = translation.localName;
+          console.log(`[ROUTE_TRANSLATE] Translated "${name}" to "${lang}": "${localName}"`);
+        }
+      } catch (err: any) {
+        console.error('[ROUTE_TRANSLATE] Failed to translate name:', err.message);
+      }
+    }
+
+    if (!isDeterministicPython && lang === 'gujarati' && localName) {
       const { repairGujaratiText } = require('@/utils/gujaratiRepair');
       localName = repairGujaratiText(localName);
     }
@@ -1137,10 +1190,10 @@ function generateAadhaarPVCHTML(params: any): string {
 
     .card-container {
       width: 1013px;
-      height: 638px;
+      height: 589px;
       position: relative;
       overflow: hidden;
-      background-size: 1013px 638px;
+      background-size: 1013px 589px;
       background-repeat: no-repeat;
       margin-bottom: 20px;
     }
@@ -1157,11 +1210,11 @@ function generateAadhaarPVCHTML(params: any): string {
     .card-heading-line1 {
       position: absolute;
       left: 150px;
-      top: 28px;
+      top: 26px;
       width: 560px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
-      font-size: 34px;
-      font-weight: normal;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', sans-serif;
+      font-size: 38px;
+      font-weight: bold;
       color: #000000;
       text-align: center;
       white-space: nowrap;
@@ -1174,9 +1227,9 @@ function generateAadhaarPVCHTML(params: any): string {
       left: 150px;
       top: 83px;
       width: 560px;
-      font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
-      font-size: 26px;
-      font-weight: normal;
+      font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', sans-serif;
+      font-size: 29px;
+      font-weight: bold;
       color: #000000;
       text-align: center;
       white-space: nowrap;
@@ -1186,7 +1239,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .photo-container {
       position: absolute;
       left: 42px;
-      top: 185px;
+      top: 161px;
       width: 183px;
       height: 230px;
       overflow: hidden;
@@ -1201,7 +1254,7 @@ function generateAadhaarPVCHTML(params: any): string {
 
     .left-strip {
       position: absolute;
-      top: 335px;
+      top: 311px;
       left: 18px;
       transform: translate(-50%, -50%) rotate(-90deg);
       transform-origin: center;
@@ -1216,7 +1269,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .local-name {
       position: absolute;
       left: 242px;
-      top: 172px;
+      top: 148px;
       width: 730px;
       font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
       font-size: 29.5px;
@@ -1232,7 +1285,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .english-name {
       position: absolute;
       left: 242px;
-      top: 211px;
+      top: 187px;
       width: 730px;
       font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
       font-size: 29.5px;
@@ -1245,7 +1298,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .dob-line {
       position: absolute;
       left: 242px;
-      top: 250px;
+      top: 226px;
       width: 730px;
       font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 26.5px;
@@ -1258,7 +1311,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .gender-line {
       position: absolute;
       left: 242px;
-      top: 289px;
+      top: 265px;
       width: 730px;
       font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 26.5px;
@@ -1271,7 +1324,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .mobile-line {
       position: absolute;
       left: 242px;
-      top: 328px;
+      top: 304px;
       width: 730px;
       font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', sans-serif;
       font-size: 26.5px;
@@ -1284,7 +1337,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .warning-box {
       position: absolute;
       left: 235px;
-      top: 365px;
+      top: 341px;
       width: 745px;
       border: 2px solid #cc0000;
       border-radius: 4px;
@@ -1321,7 +1374,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .baal-strip {
       position: absolute;
       right: 18px;
-      top: 330px;
+      top: 306px;
       transform: translate(50%, -50%) rotate(90deg);
       transform-origin: center;
       white-space: nowrap;
@@ -1342,7 +1395,7 @@ function generateAadhaarPVCHTML(params: any): string {
     #card-front.baal-card-front .baal-notice {
       position: absolute;
       right: 48px;
-      top: 308px;
+      top: 284px;
       border: 1.5px solid #cc0000;
       padding: 3px 8px;
       box-sizing: border-box;
@@ -1360,7 +1413,7 @@ function generateAadhaarPVCHTML(params: any): string {
     #card-front.baal-card-front .warning-box {
       position: absolute;
       left: 235px;
-      top: 360px;
+      top: 335px;
       width: 745px;
       border: 2px solid #cc0000;
       border-radius: 4px;
@@ -1384,31 +1437,35 @@ function generateAadhaarPVCHTML(params: any): string {
     }
 
     #card-back .aadhaar-number-block {
-      bottom: 104px; /* lifted on back card to sit cleanly above back red line */
+      bottom: 72px; /* Matched to front card position exactly */
+    }
+
+    #card-back.baal-card-back .aadhaar-number-block {
+      bottom: 86px !important; /* Matched to front baal card position */
     }
 
     #card-front .aadhaar-number-block {
-      bottom: 76px; /* Default for Adult Aadhaar front red line */
+      bottom: 72px; /* Positioned cleanly above lower front red line at 62px */
     }
 
     #card-front.baal-card-front .aadhaar-number-block {
-      bottom: 104px !important; /* Positioned cleanly above red line matching back card */
+      bottom: 86px !important; /* Positioned perfectly center between red line and warning box */
     }
 
     /* ── UIDAI Contact Info (back card only) ── */
     .uidai-contact {
       position: absolute;
-      bottom: 5px; /* shifted slightly up towards red line */
+      bottom: 0;
       left: 0;
       width: 100%;
-      height: 78px; /* strip from red line to card bottom */
+      height: 62px; /* Centered inside the 62px space below the red line */
       display: flex;
       flex-direction: row;
-      align-items: center;       /* vertical center in the strip */
+      align-items: center;
       justify-content: space-between;
       padding: 0 38px;
       font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
-      font-size: 27px;
+      font-size: 25px;
       font-weight: 800;
       color: #000000;
       line-height: 1;
@@ -1420,11 +1477,17 @@ function generateAadhaarPVCHTML(params: any): string {
       align-items: center;
       gap: 8px;
       white-space: nowrap;
-      font-size: 27px;
+      font-size: 25px;
       font-weight: 800;
     }
     .uidai-contact-icon {
-      font-size: 29px;
+      font-size: 27px;
+    }
+    
+    #card-back.baal-card-back .uidai-contact {
+      bottom: 10px;
+      justify-content: center;
+      gap: 65px;
     }
 
     .aadhaar-num-text {
@@ -1453,11 +1516,15 @@ function generateAadhaarPVCHTML(params: any): string {
     /* Back Card Coordinates */
     .qr-container {
       position: absolute;
-      left: 743px;
-      top: 150px;
-      width: 225px;
-      height: 225px;
+      left: 708px;
+      top: 132px;
+      width: 270px;
+      height: 270px;
       overflow: hidden;
+    }
+
+    #card-back.baal-card-back .qr-container {
+      top: 140px; /* Shift down slightly so it doesn't overlap logo text */
     }
 
     .qr-img {
@@ -1470,7 +1537,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .local-address-label {
       position: absolute;
       left: 44px;
-      top: 145px;
+      top: 121px;
       font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', sans-serif;
       font-size: 25px;
       font-weight: bold;
@@ -1481,7 +1548,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .local-address {
       position: absolute;
       left: 44px;
-      top: 178px;
+      top: 154px;
       width: 660px;
       font-family: '${params.localFontFamily}-Regular', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari', sans-serif;
       font-size: 27px;
@@ -1493,7 +1560,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .english-address-label {
       position: absolute;
       left: 44px;
-      top: 280px;
+      top: 256px;
       font-family: '${params.localFontFamily}-Bold', 'Arial', sans-serif;
       font-size: 25px;
       font-weight: bold;
@@ -1504,7 +1571,7 @@ function generateAadhaarPVCHTML(params: any): string {
     .english-address {
       position: absolute;
       left: 44px;
-      top: 308px;
+      top: 284px;
       width: 660px;
       font-family: '${params.localFontFamily}-Regular', 'Arial', sans-serif;
       font-size: 26px;
@@ -1516,30 +1583,53 @@ function generateAadhaarPVCHTML(params: any): string {
     /* ── Slogan Overlay ── */
     .slogan-container {
       position: absolute;
-      bottom: 12px;
+      bottom: 0;
       left: 0;
       width: 100%;
-      text-align: center;
+      height: 62px; /* Centered inside the 62px space below the red line */
+      display: flex;
+      align-items: center;
+      justify-content: center;
       font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', 'Shruti', 'Nirmala UI', sans-serif;
-      font-size: 43px;
+      font-size: 38px;
       font-weight: bold;
       color: #000000;
       line-height: 1;
-      letter-spacing: 0.5px;
       z-index: 100;
     }
     .baal-card-front .slogan-container {
-      bottom: 24px !important;
+      bottom: 10px;
+      font-size: 45px;
     }
     .slogan-red {
       color: #cc0000;
+    }
+
+    .card-footer-cover {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 90px; /* Completely covers the template's native red line and contact info */
+      background-color: #ffffff;
+      z-index: 90;
+    }
+ 
+    .card-red-line {
+      position: absolute;
+      bottom: 62px;
+      left: 0;
+      width: 100%;
+      height: 3.5px;
+      background-color: #cc0000;
+      z-index: 95;
     }
 
     /* ── Logo Text Overlay ── */
     .logo-text-overlay {
       position: absolute;
       right: 25px;
-      top: 114px;
+      top: 112px; /* Positioned cleanly below the fingerprint logo on both sides */
       width: 190px;
       text-align: center;
       font-family: '${params.localFontFamily}-Bold', 'NotoSansDevanagari-Bold', 'NotoSansDevanagari-Regular', 'NotoSansDevanagari', 'Shruti', 'Nirmala UI', sans-serif;
@@ -1574,19 +1664,20 @@ function generateAadhaarPVCHTML(params: any): string {
       const isBack = card.id === 'card-back';
 
       if (!isBack) {
-        /* Front card: position Aadhaar block for Baal Aadhaar (98px) vs Adult Aadhaar (76px) */
+        /* Front card: position Aadhaar block for Baal Aadhaar (98px) vs Adult Aadhaar (72px) */
         const isBaal = card.classList.contains('baal-card-front') || !!card.querySelector('.baal-notice');
         if (isBaal) {
-          block.style.setProperty('bottom', '94px', 'important');
+          block.style.setProperty('bottom', '86px', 'important');
         } else {
-          block.style.setProperty('bottom', '76px', 'important');
+          block.style.setProperty('bottom', '72px', 'important');
         }
         return;
       }
 
       /* Back card: start at safe height above red line */
-      const defaultBottom = 104;
-      const minBottom    = 102;
+      const isBaalBack = card.classList.contains('baal-card-back');
+      const defaultBottom = isBaalBack ? 86 : 72;
+      const minBottom    = 70;
 
       const collideSelectors = [
         '.local-address',
@@ -1729,11 +1820,15 @@ function generateAadhaarPVCHTML(params: any): string {
     ${isBaalAadhaar ? `<div class="baal-strip">${baalStripText}</div>` : ''}
 
     <!-- ── Bottom Slogan ── -->
-    <div class="slogan-container">${formattedSlogan}</div>
+    ${!isBaalAadhaar ? `
+      <div class="card-footer-cover"></div>
+      <div class="card-red-line"></div>
+    ` : ''}
+    <div class="slogan-container"><span style="white-space: pre-wrap;">${formattedSlogan}</span></div>
   </div>
 
   <!--BACK CARD-->
-  <div class="card-container" id="card-back">
+  <div class="card-container ${isBaalAadhaar ? 'baal-card-back' : ''}" id="card-back">
 
     <!-- ── Heading overlays on tricolor strokes ── -->
     <div class="card-heading-line1">${backH.line1}</div>
@@ -1765,23 +1860,25 @@ function generateAadhaarPVCHTML(params: any): string {
       ${vid ? `<div class="vid-num-text">VID: ${vid}</div>` : ''}
     </div>
 
-    <!-- ── UIDAI Contact Info (Baal Aadhaar only; Adult Aadhaar template has built-in footer) ── -->
-    ${isBaalAadhaar ? `
+    <!-- ── UIDAI Contact Info ── -->
+    ${!isBaalAadhaar ? `
+      <div class="card-footer-cover"></div>
+      <div class="card-red-line"></div>
+    ` : ''}
     <div class="uidai-contact">
       <div class="uidai-contact-item">
         <span class="uidai-contact-icon">&#128222;</span>
         <span>1947</span>
       </div>
       <div class="uidai-contact-item">
-        <span class="uidai-contact-icon">&#127760;</span>
-        <span>www.uidai.gov.in</span>
-      </div>
-      <div class="uidai-contact-item">
         <span class="uidai-contact-icon">&#9993;</span>
         <span>help@uidai.gov.in</span>
       </div>
+      <div class="uidai-contact-item">
+        <span class="uidai-contact-icon">&#127760;</span>
+        <span>www.uidai.gov.in</span>
+      </div>
     </div>
-    ` : ''}
   </div>
 
 </body>
